@@ -70,7 +70,7 @@ function textResult(text, details = {}, isError = false) {
 
 async function loadPiSdk() {
   const sdk = await import("@earendil-works/pi-coding-agent");
-  const { Type } = await import("@earendil-works/pi-ai");
+  const { Type } = await import("typebox");
   return {
     createAgentSession: sdk.createAgentSession,
     SessionManager: sdk.SessionManager,

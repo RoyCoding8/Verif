@@ -214,7 +214,7 @@ test("the installed Pi SDK accepts the isolated no-model session configuration",
 }, async (t) => {
   const workspace = await fixture(t);
   const codingAgent = await import("@earendil-works/pi-coding-agent");
-  const { Type } = await import("@earendil-works/pi-ai");
+  const { Type } = await import("typebox");
   const sdk = {
     ...codingAgent,
     Type,
