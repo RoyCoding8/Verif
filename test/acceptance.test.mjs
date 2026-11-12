@@ -8,7 +8,7 @@ import { planVerification } from '../src/contracts.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { Journal } from '../src/journal.mjs';
 import { proposeTask } from '../src/planner.mjs';
-import { inspectRun, runTasks } from '../src/verity.mjs';
+import { inspectRun, recoverOperation, runTasks } from '../src/verity.mjs';
 import { decide } from '../src/verify.mjs';
 
 async function fixture(t) {
@@ -120,4 +120,35 @@ test('planner binds approved oracle bytes without granting task approval', async
   assert.equal(proposal.intent.approval, undefined);
   assert.deepEqual(proposal.plan.obligations[0].oracle, original.oracle);
   await assert.rejects(runTasks({ ...settings, tasks: [proposal.intent], worker }), /principal approval/);
+});
+
+test('recovers a real Git ref update interrupted before the journal commit', async t => {
+  const fixtureSettings = await fixture(t);
+  const settings = { ...fixtureSettings, tasks: [fixtureSettings.tasks[1]], worker: fixtureWorker };
+  const updateRef = GitRepo.prototype.updateRef;
+  GitRepo.prototype.updateRef = function (...args) {
+    updateRef.apply(this, args);
+    throw new Error('Injected crash after Git ref update');
+  };
+  try {
+    await assert.rejects(runTasks(settings), /Promotion requires recovery/);
+  } finally {
+    GitRepo.prototype.updateRef = updateRef;
+  }
+  const journal = new Journal(settings.journalPath);
+  const ref = 'refs/heads/protected';
+  let prepared;
+  try {
+    prepared = journal.getPending(ref);
+    assert.equal(prepared.status, 'prepared');
+    assert.equal(new GitRepo(settings.repository).readRef(ref), prepared.next);
+  } finally {
+    journal.close();
+  }
+  assert.equal(inspectRun(settings).tasks[0].status, 'running');
+  const recovered = recoverOperation({ ...settings, operation: prepared.id });
+  assert.equal(recovered.status, 'promoted');
+  const [result] = await runTasks({ ...settings, worker: async () => assert.fail('Recovery dispatched the worker again') });
+  assert.equal(result.commit, prepared.next);
+  assert.equal(result.operation, prepared.id);
 });
