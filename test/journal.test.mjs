@@ -244,17 +244,17 @@ test('persists run identity by task set and approvals', () => {
       { id: 'task-a', approval: true },
     ];
     assert.deepEqual(journal.registerRun('run-1', tasks), [
-      { id: 'task-a', approval: true, status: 'queued', result: null },
-      { id: 'task-b', approval: { principal: 'reviewer', scope: ['write'] }, status: 'queued', result: null },
+      { id: 'task-a', approval: true, status: 'queued', claim: 0, result: null },
+      { id: 'task-b', approval: { principal: 'reviewer', scope: ['write'] }, status: 'queued', claim: 0, result: null },
     ]);
     journal.close();
 
     journal = new Journal(path);
-    assert.equal(journal.startTask('run-1', 'task-a').status, 'running');
+    assert.equal(journal.startTask('run-1', 'task-a').claim, 1);
     const retryTasks = [...tasks].reverse().map(task => task.id === 'task-b'
       ? { ...task, approval: { scope: ['write'], principal: 'reviewer' } }
       : task);
-    assert.equal(journal.registerRun('run-1', retryTasks)[0].status, 'running');
+    assert.equal(journal.registerRun('run-1', retryTasks)[0].claim, 1);
     assert.throws(() => journal.registerRun('run-1', [
       { id: 'task-a', approval: true },
       { id: 'task-b', approval: { principal: 'reviewer', scope: ['read'] } },
@@ -278,19 +278,19 @@ test('enforces task transitions and idempotent terminal results', () => {
       { id: 'refuse', approval: 'approved' },
       { id: 'block', approval: 'approved' },
     ]);
-    assert.equal(journal.startTask('run-1', 'promote').status, 'running');
+    const promoteClaim = journal.startTask('run-1', 'promote').claim;
     assert.throws(() => journal.startTask('run-1', 'promote'), /already running/);
-    const promoted = journal.finishTask('run-1', 'promote', { status: 'promoted', receipt: 'r1' });
+    const promoted = journal.finishTask('run-1', 'promote', { status: 'promoted', receipt: 'r1' }, promoteClaim);
     assert.equal(promoted.status, 'promoted');
-    assert.deepEqual(journal.finishTask('run-1', 'promote', { receipt: 'r1', status: 'promoted' }), promoted);
-    assert.throws(() => journal.finishTask('run-1', 'promote', { status: 'refused' }), /different result/);
+    assert.deepEqual(journal.finishTask('run-1', 'promote', { receipt: 'r1', status: 'promoted' }, promoteClaim), promoted);
+    assert.throws(() => journal.finishTask('run-1', 'promote', { status: 'refused' }, promoteClaim), /different result/);
 
     const blocked = journal.finishTask('run-1', 'block', { reason: 'not started' });
     assert.equal(blocked.status, 'blocked');
     assert.deepEqual(journal.finishTask('run-1', 'block', { reason: 'not started' }), blocked);
     assert.throws(() => journal.finishTask('run-1', 'block', { reason: 'changed' }), /different result/);
-    assert.equal(journal.startTask('run-1', 'refuse').status, 'running');
-    assert.equal(journal.finishTask('run-1', 'refuse', { status: 'refused' }).status, 'refused');
+    const refuseClaim = journal.startTask('run-1', 'refuse').claim;
+    assert.equal(journal.finishTask('run-1', 'refuse', { status: 'refused' }, refuseClaim).status, 'refused');
     assert.throws(() => journal.finishTask('run-1', 'missing', { status: 'refused' }), /unknown task/);
     assert.throws(() => journal.startTask('unknown-run', 'promote'), /unknown task/);
     assert.deepEqual(journal.runTasks('run-1').map(task => task.status), ['blocked', 'promoted', 'refused']);
@@ -306,10 +306,11 @@ test('requeues only running tasks as an explicit transition', () => {
     const journal = new Journal(path);
     journal.registerRun('run-1', [{ id: 'task-a', approval: true }]);
     assert.throws(() => journal.requeueTask('run-1', 'task-a'), /not running/);
-    journal.startTask('run-1', 'task-a');
+    const firstClaim = journal.startTask('run-1', 'task-a').claim;
     assert.equal(journal.requeueTask('run-1', 'task-a').status, 'queued');
-    assert.equal(journal.startTask('run-1', 'task-a').status, 'running');
-    assert.equal(journal.finishTask('run-1', 'task-a', { status: 'promoted' }).status, 'promoted');
+    const secondClaim = journal.startTask('run-1', 'task-a').claim;
+    assert.equal(secondClaim, firstClaim + 1);
+    assert.equal(journal.finishTask('run-1', 'task-a', { status: 'promoted' }, secondClaim).status, 'promoted');
     assert.throws(() => journal.requeueTask('run-1', 'task-a'), /not running/);
     journal.close();
   } finally {
@@ -322,9 +323,16 @@ test('finds the latest promoted operation recorded for a run task', () => {
   try {
     const journal = new Journal(path);
     start(journal);
+    journal.registerRun('run-1', [{ id: 'task-a', approval: true }]);
+    const claim = journal.startTask('run-1', 'task-a').claim;
+    journal.registerAttempt({
+      id: 'attempt-task', contract: 'contract-a', policy: 'policy-a',
+      runId: 'run-1', taskId: 'task-a', claim,
+    });
     const promote = (id, refName, old, next) => {
       journal.prepare(request({
         id,
+        attempt: 'attempt-task',
         ref: refName,
         old,
         next,
@@ -343,6 +351,68 @@ test('finds the latest promoted operation recorded for a run task', () => {
     const latest = promote('op-2', 'refs/heads/two', 'two-a', 'two-b');
     assert.equal(journal.getTaskPromotion('run-1', 'task-a').id, latest.id);
     assert.equal(journal.getTaskPromotion('run-other', 'task-a'), null);
+    journal.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('fences stale task completion and promotion by claim generation', () => {
+  const { path, cleanup } = fixture();
+  try {
+    const journal = new Journal(path);
+    journal.registerRun('run-1', [
+      { id: 'task-a', approval: true },
+      { id: 'task-b', approval: true },
+    ]);
+    const claimA1 = journal.startTask('run-1', 'task-a').claim;
+    journal.registerAttempt({
+      id: 'attempt-a1', contract: 'contract-a', policy: 'policy-a',
+      runId: 'run-1', taskId: 'task-a', claim: claimA1,
+    });
+    assert.equal(journal.authority('attempt-a1').active, true);
+    journal.requeueTask('run-1', 'task-a');
+    assert.equal(journal.authority('attempt-a1').active, false);
+    const claimA2 = journal.startTask('run-1', 'task-a').claim;
+    assert.equal(claimA2, claimA1 + 1);
+    assert.throws(() => journal.finishTask('run-1', 'task-a', { status: 'refused' }, claimA1), /not current/);
+    assert.throws(() => journal.prepare(request({
+      id: 'stale-op', attempt: 'attempt-a1',
+      receipt: { runId: 'run-1', task: { contract: { id: 'task-a' } } },
+    })), /does not authorize/);
+
+    const claimB = journal.startTask('run-1', 'task-b').claim;
+    journal.registerAttempt({
+      id: 'attempt-b', contract: 'contract-a', policy: 'policy-a',
+      runId: 'run-1', taskId: 'task-b', claim: claimB,
+    });
+    journal.prepare(request({
+      id: 'pending-op', attempt: 'attempt-b',
+      receipt: { runId: 'run-1', task: { contract: { id: 'task-b' } } },
+    }));
+    assert.throws(() => journal.requeueTask('run-1', 'task-b'), /while operation pending-op is prepared/);
+    journal.invalidate('attempt-b');
+    assert.throws(() => journal.promote('pending-op', {
+      readRef: () => 'commit-a',
+      recheck: () => true,
+      updateRef: () => assert.fail('revoked task generation must not promote'),
+    }), /no longer authorizes/);
+    journal.abandon('pending-op', { readRef: () => 'commit-a' });
+    journal.registerAttempt({
+      id: 'attempt-b-next', contract: 'contract-a', policy: 'policy-a',
+      runId: 'run-1', taskId: 'task-b', claim: claimB,
+    });
+    journal.prepare(request({
+      id: 'promoted-op', attempt: 'attempt-b-next', ref: 'refs/heads/promoted',
+      receipt: { runId: 'run-1', task: { contract: { id: 'task-b' } } },
+    }));
+    let promotedRef = 'commit-a';
+    journal.promote('promoted-op', {
+      readRef: () => promotedRef,
+      recheck: () => true,
+      updateRef: (_ref, next) => { promotedRef = next; },
+    });
+    assert.throws(() => journal.requeueTask('run-1', 'task-b'), /while operation promoted-op is promoted/);
     journal.close();
   } finally {
     cleanup();
