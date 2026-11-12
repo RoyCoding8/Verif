@@ -1,0 +1,51 @@
+name: Lean reference
+
+on:
+  push:
+    paths:
+      - "src/contracts.mjs"
+      - "verification/lean/**"
+      - ".github/workflows/lean-reference.yml"
+  pull_request:
+    paths:
+      - "src/contracts.mjs"
+      - "verification/lean/**"
+      - ".github/workflows/lean-reference.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lean-reference:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: verification/lean
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Install Bubblewrap for kernel replay
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          bwrap --unshare-user --uid 65534 --gid 65534 --ro-bind / / true
+      - name: Build with pinned Lean toolchain
+        uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee
+        with:
+          lake-package-directory: verification/lean
+          auto-config: false
+          build: true
+          build-args: --wfail
+          use-mathlib-cache: false
+      - name: Replay compiled declarations through the Lean kernel
+        run: lake check
+      - name: Require axiom-free exported theorems
+        run: |
+          lake env lean -DwarningAsError=true AxiomAudit.lean > axioms.txt
+          node check-axioms.mjs axioms.txt
+      - name: Run executable Lean fixtures
+        run: lake exe contractFixtures > lean-results.json
+      - name: Compare with src/contracts.mjs
+        run: node compare.mjs lean-results.json
