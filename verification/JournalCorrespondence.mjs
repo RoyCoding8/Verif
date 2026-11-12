@@ -51,6 +51,7 @@ export function transitions(state, { unsafeAuthorization = false } = {}) {
       edges.push(edge(state, 'promote', state, 'refused'));
     } else if (authorized(state)) {
       edges.push(edge(state, 'promote', replace(state, { head: Next, status: 'promoted' })));
+      edges.push(edge(state, 'rejectRecheck', state, 'recheckRefused'));
     } else if (unsafeAuthorization) {
       edges.push(edge(state, 'promote', replace(state, { head: Next, status: 'promoted' }), 'unsafe'));
     } else {

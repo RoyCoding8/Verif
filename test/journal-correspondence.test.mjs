@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Journal } from '../src/journal.mjs';
@@ -14,7 +15,6 @@ import {
 } from '../verification/JournalCorrespondence.mjs';
 
 const { Old, Other } = values;
-const fixtureRoot = join(process.cwd(), 'test');
 const operation = {
   id: 'op',
   attempt: 'attempt',
@@ -27,7 +27,7 @@ const operation = {
 };
 
 function withJournal(run) {
-  const dir = mkdtempSync(join(fixtureRoot, '.journal-correspondence-'));
+  const dir = mkdtempSync(join(tmpdir(), 'verity-journal-correspondence-'));
   const journal = new Journal(join(dir, 'journal.sqlite'));
   try {
     journal.registerAttempt({ id: 'attempt', contract: 'contract', policy: 'policy-a' });
@@ -42,12 +42,17 @@ function withJournal(run) {
 function observe(journal, ref) {
   const authority = journal.authority('attempt');
   const prepared = journal.getOperation('op');
+  const generation = policy => {
+    if (policy === 'policy-a') return 0;
+    if (policy === 'policy-b') return 1;
+    throw new Error('unmodeled policy label: ' + policy);
+  };
   return {
     head: ref.value,
     status: prepared?.status ?? 'none',
     attemptActive: authority.active,
-    policyEpoch: authority.policy === 'policy-a' ? 0 : 1,
-    operationEpoch: prepared ? (prepared.policy === 'policy-a' ? 0 : 1) : null,
+    policyEpoch: generation(authority.policy),
+    operationEpoch: prepared ? generation(prepared.policy) : null,
   };
 }
 
@@ -86,6 +91,18 @@ function apply(journal, ref, transition) {
         },
       }), /simulated lost response/);
       break;
+    case 'rejectRecheck': {
+      let rechecks = 0;
+      let updates = 0;
+      assert.throws(() => journal.promote('op', {
+        readRef: () => ref.value,
+        recheck: () => { rechecks += 1; return false; },
+        updateRef: () => { updates += 1; },
+      }), /recheck rejected/);
+      assert.equal(rechecks, 1);
+      assert.equal(updates, 0);
+      break;
+    }
     case 'promote': {
       let rechecks = 0;
       let updates = 0;
@@ -145,7 +162,7 @@ test('every reachable abstract transition conforms to SQLite Journal observation
     uniqueEdges.set(key, transition);
   }
   assert.equal(graph.states.length, 28);
-  assert.equal(uniqueEdges.size, 58);
+  assert.equal(uniqueEdges.size, 60);
   for (const transition of uniqueEdges.values()) {
     assert.equal(promotionInvariant(transition), true, transition.action + ' must preserve authorization');
   }
@@ -166,6 +183,7 @@ test('every reachable abstract transition conforms to SQLite Journal observation
   assert.ok(graph.edges.some(({ action, outcome }) => action === 'promote' && outcome === 'refused'));
   assert.ok(graph.edges.some(({ action }) => action === 'revokeAttempt'));
   assert.ok(graph.edges.some(({ action }) => action === 'changePolicy'));
+  assert.ok(graph.edges.some(({ action, outcome }) => action === 'rejectRecheck' && outcome === 'recheckRefused'));
 });
 
 test('authorization invariant rejects the unsafe stale-authority transition', () => {
