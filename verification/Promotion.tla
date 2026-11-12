@@ -31,6 +31,7 @@ Init ==
 Prepare ==
   /\ journal = "none"
   /\ head = Old
+  /\ attemptActive
   /\ journal' = "prepared"
   /\ operationEpoch' = policyEpoch
   /\ crashed' = FALSE
@@ -66,6 +67,14 @@ RefuseStaleAuthorization ==
   /\ ~crashed
   /\ ~AuthorizedNow
   /\ FenceAuthorization
+  /\ decision' = "refused"
+  /\ UNCHANGED <<head, journal, attemptActive, policyEpoch, operationEpoch,
+                 crashed, updateAuthorized>>
+
+RefuseStaleHead ==
+  /\ journal = "prepared"
+  /\ head = Other
+  /\ ~crashed
   /\ decision' = "refused"
   /\ UNCHANGED <<head, journal, attemptActive, policyEpoch, operationEpoch,
                  crashed, updateAuthorized>>
@@ -117,6 +126,7 @@ NextState ==
   \/ RevokeAttempt
   \/ RetryAtOld
   \/ RefuseStaleAuthorization
+  \/ RefuseStaleHead
   \/ CrashAfterRefWriteBeforeJournalCommit
   \/ CommitPromotion
   \/ RecoverAfterWrite
@@ -136,5 +146,9 @@ TypeOK ==
   /\ decision \in Decisions
 
 AuthorizedUpdateInvariant == updateAuthorized \/ head # Target
+
+JournalRefInvariant ==
+  /\ (journal = "promoted" => head = Target)
+  /\ (journal = "abandoned" => head # Target)
 
 ============================================================
