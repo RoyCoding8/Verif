@@ -39,6 +39,7 @@ function taskFromRow(row) {
     approval: JSON.parse(row.approval),
     status: row.status,
     claim: row.claim,
+    startedMs: row.started_ms ?? null,
     result: row.result_set === 1 ? JSON.parse(row.result) : null,
   };
 }
@@ -109,6 +110,7 @@ export class Journal {
         approval TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'blocked', 'promoted', 'refused')),
         claim INTEGER NOT NULL DEFAULT 0 CHECK (claim >= 0),
+        started_ms INTEGER,
         result TEXT,
         result_set INTEGER NOT NULL CHECK (result_set IN (0, 1)),
         PRIMARY KEY (run_id, task_id),
@@ -123,6 +125,7 @@ export class Journal {
     if (!taskColumns.has('claim')) {
       this.#db.exec('ALTER TABLE run_tasks ADD COLUMN claim INTEGER NOT NULL DEFAULT 0 CHECK (claim >= 0)');
     }
+    if (!taskColumns.has('started_ms')) this.#db.exec('ALTER TABLE run_tasks ADD COLUMN started_ms INTEGER');
     const schema = this.#db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'operations'").get();
     if (!schema.sql.includes("'abandoned'")) {
       this.#db.exec(`
@@ -192,10 +195,11 @@ export class Journal {
         return this.authority(id);
       }
       if (bound) {
-        const task = this.#db.prepare('SELECT status, claim FROM run_tasks WHERE run_id = ? AND task_id = ?')
+        const task = this.#db.prepare('SELECT status, claim, approval FROM run_tasks WHERE run_id = ? AND task_id = ?')
           .get(runId, taskId);
-        if (!task || task.status !== 'running' || task.claim !== claim) {
-          throw new Error(`task ${taskId} in run ${runId} is not running claim ${claim}`);
+        if (!task || task.status !== 'running' || task.claim !== claim ||
+            task.approval !== canonicalJsonValue(contract, 'contract')) {
+          throw new Error(`task ${taskId} in run ${runId} does not authorize contract ${contract} at claim ${claim}`);
         }
       }
       this.#db.prepare(`
@@ -208,14 +212,16 @@ export class Journal {
 
   authority(id) {
     id = requireString(id, 'id');
-    const row = this.#db.prepare('SELECT id, contract, policy, active FROM attempts WHERE id = ?').get(id);
+    const row = this.#db.prepare(`
+      SELECT id, contract, policy, active, run_id, task_id, claim
+      FROM attempts WHERE id = ?
+    `).get(id);
     if (!row) return null;
-    const binding = this.#db.prepare('SELECT run_id, task_id, claim FROM attempts WHERE id = ?').get(id);
     let active = row.active === 1;
-    if (active && binding.run_id !== null) {
+    if (active && row.run_id !== null) {
       const task = this.#db.prepare('SELECT status, claim FROM run_tasks WHERE run_id = ? AND task_id = ?')
-        .get(binding.run_id, binding.task_id);
-      active = !!task && task.status === 'running' && task.claim === binding.claim;
+        .get(row.run_id, row.task_id);
+      active = !!task && task.status === 'running' && task.claim === row.claim;
     }
     return { id: row.id, contract: row.contract, policy: row.policy, active };
   }
@@ -255,9 +261,10 @@ export class Journal {
       const receiptData = JSON.parse(receipt);
       const receiptRun = receiptData.runId;
       const receiptTask = receiptData.task?.contract?.id;
+      const receiptClaim = receiptData.claim;
       const hasTaskBinding = receiptRun !== undefined || receiptTask !== undefined;
       if (attempt.run_id !== null) {
-        if (receiptRun !== attempt.run_id || receiptTask !== attempt.task_id) {
+        if (receiptRun !== attempt.run_id || receiptTask !== attempt.task_id || receiptClaim !== attempt.claim) {
           throw new Error(`operation ${values.id} receipt does not match attempt ${values.attempt}`);
         }
       } else if (hasTaskBinding) {
@@ -387,8 +394,8 @@ export class Journal {
 
       this.#db.prepare('INSERT INTO runs (id) VALUES (?)').run(id);
       const insert = this.#db.prepare(`
-        INSERT INTO run_tasks (run_id, task_id, approval, status, result, result_set)
-        VALUES (?, ?, ?, 'queued', NULL, 0)
+        INSERT INTO run_tasks (run_id, task_id, approval, status, claim, started_ms, result, result_set)
+        VALUES (?, ?, ?, 'queued', 0, NULL, NULL, 0)
       `);
       for (const task of entries) insert.run(id, task.id, task.approval);
       return this.runTasks(id);
@@ -412,8 +419,11 @@ export class Journal {
       if (!row) throw new Error(`unknown task ${id} in run ${run}`);
       if (row.status === 'running') throw new Error(`task ${id} is already running`);
       if (row.status !== 'queued') throw new Error(`task ${id} is ${row.status}, not queued`);
-      this.#db.prepare("UPDATE run_tasks SET status = 'running', claim = claim + 1 WHERE run_id = ? AND task_id = ?")
-        .run(run, id);
+      this.#db.prepare(`
+        UPDATE run_tasks
+        SET status = 'running', claim = claim + 1, started_ms = COALESCE(started_ms, ?)
+        WHERE run_id = ? AND task_id = ?
+      `).run(Date.now(), run, id);
       return taskFromRow(this.#db.prepare('SELECT * FROM run_tasks WHERE run_id = ? AND task_id = ?').get(run, id));
     });
   }
