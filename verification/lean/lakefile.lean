@@ -7,6 +7,5 @@ package verityReference where
 @[default_target]
 lean_lib VerityContract
 
-@[default_target]
 lean_exe contractFixtures where
   root := `ContractFixtures

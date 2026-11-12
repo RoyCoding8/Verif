@@ -19,6 +19,7 @@ permissions:
 jobs:
   lean-reference:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: verification/lean
@@ -40,6 +41,7 @@ jobs:
           build-args: --wfail
           use-mathlib-cache: false
       - name: Replay compiled declarations through the Lean kernel
+        timeout-minutes: 4
         run: lake check
       - name: Require axiom-free exported theorems
         run: |

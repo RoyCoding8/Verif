@@ -14,7 +14,7 @@ A finite-domain number represents the identity of a normalized finite domain. Th
 
 ## Proof and CI checks
 
-The pinned toolchain is Lean 4.35.0. CI builds with warnings as errors, runs lake check to replay the exported project through Lean's kernel, prints the axioms of each exported theorem, rejects any axiom dependency for those theorems, executes the JSON fixtures, and compares their outcomes with planVerification and compose.
+The pinned toolchain is Lean 4.35.0. The library is the only Lake default target, so lake check replays the assurance model and proofs without the fixture parser or executable. CI gives kernel replay four minutes within a ten-minute job timeout. CI builds with warnings as errors, runs lake check to replay the exported project through Lean's kernel, prints the axioms of each exported theorem, rejects any axiom dependency for those theorems, executes the JSON fixtures, and compares their outcomes with planVerification and compose.
 
 Run from this directory:
 
