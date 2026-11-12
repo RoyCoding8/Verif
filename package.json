@@ -1,0 +1,20 @@
+{
+  "name": "verity",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "verity": "./src/cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "demo": "node examples/run.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2"
+  }
+}

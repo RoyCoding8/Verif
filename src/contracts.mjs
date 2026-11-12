@@ -1,0 +1,179 @@
+import { createHash } from 'node:crypto';
+
+const levels = new Map([['tested', 0], ['bounded', 1], ['formal', 2]]);
+const methods = new Map([['node-test', 'tested'], ['finite-domain', 'bounded']]);
+
+export function requireThat(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+  if (value !== null && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
+  }
+  requireThat(value === null || ['boolean', 'string'].includes(typeof value) || Number.isFinite(value), 'Expected a canonical JSON value');
+  return JSON.stringify(value);
+}
+
+export function hash(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+export function digest(record) {
+  return hash(canonical(record));
+}
+
+export function text(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function safePath(value) {
+  return typeof value === 'string' && value.split('/').every(part =>
+    part.length > 0 && !/[\\:*?"<>|\x00-\x1f]/.test(part) &&
+    !/[. ]$/.test(part) && part.toLowerCase() !== '.git' &&
+    !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part));
+}
+
+export function within(path, rules) {
+  return rules.some(rule => path === rule || path.startsWith(rule + '/'));
+}
+
+function index(items, label) {
+  requireThat(Array.isArray(items) && items.length > 0, 'Missing ' + label);
+  const records = new Map();
+  for (const item of items) {
+    requireThat(text(item?.id) && !records.has(item.id), 'Invalid or duplicate ' + label + ' ID');
+    records.set(item.id, item);
+  }
+  return records;
+}
+
+function weakest(levelsToCompare) {
+  return levelsToCompare.reduce((a, b) => levels.get(a) <= levels.get(b) ? a : b);
+}
+
+function assurance(plan, levelOf) {
+  const claims = index(plan.claims, 'claim');
+  const visiting = new Set();
+  const complete = new Map();
+  function visit(id) {
+    if (complete.has(id)) return complete.get(id);
+    requireThat(!visiting.has(id), 'Cyclic claim dependency at ' + id);
+    const claim = claims.get(id);
+    requireThat(claim, 'Unknown claim ' + id);
+    visiting.add(id);
+    const levelsToCompare = [levelOf(claim)];
+    for (const link of claim.dependencies) {
+      const dependency = claims.get(link.claim);
+      requireThat(dependency && link.statement === dependency.statement, 'Unbound claim dependency for ' + id);
+      const effective = visit(link.claim);
+      if (effective === 'bounded') {
+        requireThat(claim.domain === dependency.domain, 'Incompatible finite domains for ' + id);
+      }
+      levelsToCompare.push(effective);
+    }
+    const effective = weakest(levelsToCompare);
+    requireThat(levels.get(effective) >= levels.get(claim.required), 'Insufficient assurance for ' + id);
+    visiting.delete(id);
+    complete.set(id, effective);
+    return effective;
+  }
+  for (const id of claims.keys()) visit(id);
+  return Object.fromEntries(complete);
+}
+
+function normalizeObligation(obligation, claims) {
+  const { claim, subject, expect, witness = null, outputs = [], oracle } = obligation;
+  const specification = claims.get(claim);
+  requireThat(specification, 'Unknown obligation claim ' + claim);
+  const method = obligation.method ?? (specification.required === 'bounded' ? 'finite-domain' : 'node-test');
+  requireThat(methods.has(method), 'Unsupported verification method ' + method);
+  requireThat(subject === 'candidate' || subject === 'base' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(subject), 'Invalid obligation subject');
+  requireThat((expect === 'PASS' && witness === null) || (expect === 'FAIL' && text(witness)), 'Invalid expected verdict');
+  requireThat(safePath(oracle?.file) && oracle.file.endsWith('.json') &&
+    /^[a-f0-9]{64}$/.test(oracle.digest), 'Oracle must be an approved JSON file with a digest');
+  requireThat(Array.isArray(outputs) && (outputs.length === 0 || (outputs.length === 1 && outputs[0] === 'cases.json')),
+    'Supported output is cases.json');
+  requireThat(Number.isSafeInteger(obligation.timeoutMs) && obligation.timeoutMs > 0, 'Invalid verification timeout');
+  const cases = obligation.cases;
+  requireThat(Array.isArray(cases) && cases.length > 0 && cases.every(text) &&
+    new Set(cases).size === cases.length, 'Every obligation needs unique declared case IDs');
+  requireThat(method !== 'finite-domain' || text(specification.domain), 'Finite-domain obligations need a domain');
+  return { id: obligation.id, claim, subject, expect, witness, method, oracle, outputs, cases, timeoutMs: obligation.timeoutMs };
+}
+
+export function planVerification(intent) {
+  const claims = [...index(intent.claims, 'claim').values()].map(claim => {
+    requireThat(text(claim.statement) && levels.has(claim.required), 'Invalid claim ' + claim.id);
+    requireThat(claim.domain == null || text(claim.domain), 'Invalid claim domain');
+    const dependencies = claim.dependencies ?? [];
+    requireThat(Array.isArray(dependencies) && dependencies.every(link => text(link?.claim) && text(link.statement)), 'Invalid claim dependencies');
+    return { id: claim.id, statement: claim.statement, required: claim.required, domain: claim.domain ?? null, dependencies };
+  });
+  const indexedClaims = index(claims, 'claim');
+  const obligations = [...index(intent.obligations, 'obligation').values()].map(o => normalizeObligation(o, indexedClaims));
+  const criteria = [...index(intent.criteria, 'criterion').values()].map(criterion => {
+    requireThat(text(criterion.description) && Array.isArray(criterion.claims) && criterion.claims.length > 0 &&
+      criterion.claims.every(id => indexedClaims.has(id)), 'Invalid coverage for criterion ' + criterion.id);
+    return { id: criterion.id, description: criterion.description, claims: criterion.claims };
+  });
+  const plan = { version: 1, criteria, claims, obligations };
+  assurance(plan, claim => {
+    const direct = obligations.filter(o => o.claim === claim.id && o.subject === 'candidate' && o.expect === 'PASS');
+    requireThat(direct.length > 0, 'Claim lacks a positive candidate obligation: ' + claim.id);
+    return weakest(direct.map(o => methods.get(o.method)));
+  });
+  return plan;
+}
+
+export function makeContract(input, plan) {
+  const { id, goal, scope, policy, dependencies = [], base = 'head-at-dispatch' } = input;
+  requireThat(text(id) && text(goal) && Number.isSafeInteger(input.revision) && input.revision >= 1, 'Invalid contract identity');
+  requireThat(Array.isArray(dependencies) && dependencies.every(text) && !dependencies.includes(id) &&
+    new Set(dependencies).size === dependencies.length, 'Invalid task dependencies');
+  requireThat(base === 'head-at-dispatch' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(base), 'Invalid task base');
+  requireThat(typeof policy?.ref === 'string' && policy.ref.startsWith('refs/heads/'), 'Invalid protected branch');
+  requireThat(Number.isSafeInteger(policy.budgetMs) && policy.budgetMs > 0, 'Invalid task budget');
+  requireThat(Number.isSafeInteger(policy.maxRepairs ?? 0) && (policy.maxRepairs ?? 0) >= 0, 'Invalid repair limit');
+  requireThat(plan.obligations.reduce((sum, o) => sum + o.timeoutMs, 0) < policy.budgetMs, 'Verification exceeds task budget');
+  requireThat(scope && ['read', 'write', 'forbidden'].every(key => Array.isArray(scope[key]) && scope[key].every(safePath)),
+    'Invalid contract path scope');
+  requireThat(scope.write.length > 0, 'Empty write scope');
+  requireThat(!scope.write.some(path => within(path, scope.forbidden)), 'Write scope is forbidden');
+  return { version: 1, id, revision: input.revision, goal, base, dependencies, scope, policy, plan: digest(plan) };
+}
+
+export function approvedTask(input) {
+  const plan = planVerification(input);
+  const contract = makeContract(input, plan);
+  const approval = digest(contract);
+  requireThat(input.approval === approval, 'Missing or mismatched principal approval for ' + contract.id);
+  return { contract, plan, approval };
+}
+
+export function evidenceKeys(obligation, claim, subject, manifest, environment) {
+  const run = digest({
+    version: 1, method: obligation.method, oracle: obligation.oracle, cases: obligation.cases,
+    timeoutMs: obligation.timeoutMs, subject, manifest, environment,
+  });
+  return { run, authorization: digest({
+    version: 1, run, obligation: obligation.id, claim, expect: obligation.expect,
+    witness: obligation.witness, outputs: obligation.outputs,
+  }) };
+}
+
+export function compose(plan, results) {
+  const byId = index(results, 'obligation result');
+  requireThat(byId.size === plan.obligations.length, 'Incomplete or extraneous evidence');
+  for (const obligation of plan.obligations) {
+    const result = byId.get(obligation.id);
+    requireThat(result?.status === obligation.expect, 'Unexpected verdict for ' + obligation.id);
+    requireThat(obligation.expect !== 'FAIL' || result.witness === obligation.witness, 'Wrong failure witness for ' + obligation.id);
+    requireThat(result.level === methods.get(obligation.method), 'Unsupported assurance for ' + obligation.id);
+    requireThat(Object.keys(result.outputs).length === obligation.outputs.length && obligation.outputs.every(path =>
+      Object.hasOwn(result.outputs, path) && /^[a-f0-9]{64}$/.test(result.outputs[path])), 'Missing outputs for ' + obligation.id);
+  }
+  return assurance(plan, claim => weakest(plan.obligations.filter(o =>
+    o.claim === claim.id && o.subject === 'candidate' && o.expect === 'PASS').map(o => byId.get(o.id).level)));
+}

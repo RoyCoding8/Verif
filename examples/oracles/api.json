@@ -1,0 +1,3 @@
+[
+  {"id":"declined-reservation","module":"api.mjs","name":"reserveAndRespond","args":[0,1],"expected":{"remaining":0,"message":"Reservation declined"}}
+]

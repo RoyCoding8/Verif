@@ -1,0 +1,33 @@
+# Verity
+
+Verity turns approved software tasks into checked Git changes. A Pi worker proposes changes in its own checkout. Verity runs the approved verification plan against the integration snapshot and records the results before updating the protected branch.
+
+## Run the reservation example
+
+Use Node.js 24 and Git 2.38 or later.
+
+```sh
+npm ci
+npm run demo
+```
+
+The example starts two independent reservation tasks and schedules the API task after both land. It checks all 15 cases in a declared arithmetic domain, observes the expected failure on the original code, and checks one API interaction. The fixture supplies reproducible candidate edits. To let Pi propose the edits, configure a Pi model and run `npm run demo -- --pi`.
+
+## Run an approved plan
+
+The manifest contains `repository`, `oracles`, `journal`, `scratch`, `maxWorkers`, and `tasks`. Paths are relative to the manifest. The example builds the task records in `examples/setup.mjs`. Store the manifest, oracle files, journal, and protected repository under controller control.
+
+1. Run `node src/cli.mjs plan manifest.json` to inspect the proposed contract, coverage, and obligations.
+2. Review the plan and set each task's `approval` to the displayed digest when you approve it.
+3. Run `node src/cli.mjs run manifest.json`.
+4. Use `node src/cli.mjs receipt manifest.json <operation>` to inspect the recorded evidence.
+
+Use `cancel` with an attempt ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit.
+
+## Evidence and operating scope
+
+Each JSON oracle lists case IDs, module paths, exported functions, inputs, and expected values. The evaluator receives inputs in a separate process. The verifier compares its output with the approved values and binds the result to the oracle digest, adapter, and checked tree.
+
+The tested route reports observed cases. The bounded route reports every case in the approved finite enumeration. A human reviews whether that enumeration captures the intended domain. The TLA+ model checks a finite promotion protocol and includes an unfenced configuration that must produce an unauthorized-update counterexample.
+
+Run Verity on a trusted host with cooperative workers and controller-owned Git refs. Independent checkouts and process permissions constrain the supplied worker and Node verification routes. A hostile-code isolation boundary requires stronger deployment controls.

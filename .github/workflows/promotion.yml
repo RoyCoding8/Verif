@@ -31,4 +31,4 @@ jobs:
             exit 1
           fi
           cat "$RUNNER_TEMP/unfenced.log"
-          rg --fixed-strings 'Invariant AuthorizedUpdateInvariant is violated.' "$RUNNER_TEMP/unfenced.log"
+          grep --fixed-strings 'Invariant AuthorizedUpdateInvariant is violated.' "$RUNNER_TEMP/unfenced.log"
