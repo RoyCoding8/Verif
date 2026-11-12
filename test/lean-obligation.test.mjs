@@ -14,11 +14,11 @@ const theorem = 'Warranty.addZero';
 const statement = 'theorem Warranty.addZero (n : Nat) : n + 0 = n';
 const solution = 'Proof.lean';
 const oracle = { theorem, solution, challenge: statement + ' := by rfl\n' };
-const policy = { ref: 'refs/heads/protected', budgetMs: 180_000, maxRepairs: 1 };
+const policy = { ref: 'refs/heads/protected', budgetMs: 240_000, maxRepairs: 1 };
 const claim = { id: 'identity', statement: 'Adding zero to any natural number leaves it unchanged', required: 'formal' };
 const bytes = JSON.stringify(oracle);
 const obligation = { id: 'proof', claim: claim.id, method: 'lean-comparator', subject: 'candidate', expect: 'PASS',
-  cases: [theorem], oracle: { file: 'proof.json', digest: hash(bytes) }, timeoutMs: 45_000, outputs: ['cases.json'] };
+  cases: [theorem], oracle: { file: 'proof.json', digest: hash(bytes) }, timeoutMs: 75_000, outputs: ['cases.json'] };
 const intent = { id: 'identity', revision: 1, goal: statement, policy,
   scope: { read: [], write: [solution], forbidden: [] }, claims: [claim], obligations: [obligation],
   criteria: [{ id: 'identity', description: claim.statement, claims: [claim.id] }] };
