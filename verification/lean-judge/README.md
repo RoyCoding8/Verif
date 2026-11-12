@@ -22,7 +22,7 @@ Each call creates two distinct temporary Lake projects.
 2. The solution project contains controller-written Lake metadata and comparator configuration plus only the exact candidate Solution.lean bytes. It does not contain Challenge.lean.
 3. The solution project invokes lake comparator --challenge-from-export=<file> --paranoid. The trusted export is passed as a read-only input. Comparator builds the candidate solution inside its bubblewrap sandbox.
 
-The child process receives only PATH, locale, timezone, and HOME when present. It does not inherit process credentials or comparator/Lean override variables. The project manifests declare no dependencies; this first method accepts self-contained Lean core proofs.
+The child process receives only PATH, locale, timezone, and HOME and ELAN_HOME when present. It does not inherit process credentials or comparator/Lean override variables. The project manifests declare no dependencies; this first method accepts self-contained Lean core proofs.
 
 ## Judgment
 

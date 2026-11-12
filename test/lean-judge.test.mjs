@@ -46,6 +46,7 @@ if [ "$command" = "build" ]; then
   test "$1" = "Challenge"
   test -f Challenge.lean
   test ! -f Solution.lean
+  test ! -e ../solution
   grep -F sorry Challenge.lean >/dev/null
   exit 0
 fi
@@ -54,6 +55,7 @@ if [ "$command" = "env" ]; then
   test "$2" = "Challenge"
   test -f Challenge.lean
   test ! -f Solution.lean
+  test ! -e ../solution
   printf "fixture export\n"
   exit 0
 fi

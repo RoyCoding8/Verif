@@ -76,6 +76,7 @@ function commandEnvironment() {
     TZ: 'UTC',
   };
   if (process.env.HOME) env.HOME = process.env.HOME;
+  if (process.env.ELAN_HOME) env.ELAN_HOME = process.env.ELAN_HOME;
   return env;
 }
 
@@ -203,10 +204,7 @@ export async function judgeLean({ challenge, solution, theorem, timeoutMs, signa
   const solutionProject = join(root, 'solution');
   const challengeExport = join(root, 'challenge.ndjson');
   try {
-    await Promise.all([
-      prepareProject(challengeProject, 'verity_lean_challenge', 'Challenge.lean', challenge, challengeLakefile),
-      prepareProject(solutionProject, 'verity_lean_solution', 'Solution.lean', solution, solutionLakefile),
-    ]);
+    await prepareProject(challengeProject, 'verity_lean_challenge', 'Challenge.lean', challenge, challengeLakefile);
     const version = await runRequired('lake', ['--version'], {
       cwd: challengeProject, env, deadline, signal,
     });
@@ -220,6 +218,7 @@ export async function judgeLean({ challenge, solution, theorem, timeoutMs, signa
       cwd: challengeProject, env, deadline, signal,
     });
     await exportChallenge(challengeProject, challengeExport, env, deadline, signal);
+    await prepareProject(solutionProject, 'verity_lean_solution', 'Solution.lean', solution, solutionLakefile);
     return await runComparator(solutionProject, challengeExport, theorem, env, deadline, signal);
   } finally {
     await rm(root, { recursive: true, force: true });
