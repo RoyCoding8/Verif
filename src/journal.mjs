@@ -9,22 +9,37 @@ function requireString(value, name) {
   return value;
 }
 
-function canonicalJson(value) {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new TypeError('receipt must be a JSON object');
-  }
+function canonicalJsonValue(value, name) {
   const json = JSON.stringify(value);
-  if (json === undefined) throw new TypeError('receipt must be JSON serializable');
+  if (json === undefined) throw new TypeError(`${name} must be JSON serializable`);
   const parsed = JSON.parse(json);
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new TypeError('receipt must serialize to a JSON object');
-  }
   const sort = item => Array.isArray(item)
     ? item.map(sort)
     : item && typeof item === 'object'
       ? Object.fromEntries(Object.keys(item).sort().map(key => [key, sort(item[key])]))
       : item;
   return JSON.stringify(sort(parsed));
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('receipt must be a JSON object');
+  }
+  const json = canonicalJsonValue(value, 'receipt');
+  const parsed = JSON.parse(json);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new TypeError('receipt must serialize to a JSON object');
+  }
+  return json;
+}
+
+function taskFromRow(row) {
+  return {
+    id: row.task_id,
+    approval: JSON.parse(row.approval),
+    status: row.status,
+    result: row.result_set === 1 ? JSON.parse(row.result) : null,
+  };
 }
 
 function operationFromRow(row) {
@@ -78,6 +93,19 @@ export class Journal {
         next TEXT NOT NULL,
         receipt TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('prepared', 'promoted', 'abandoned'))
+      );
+      CREATE TABLE IF NOT EXISTS runs (
+        id TEXT PRIMARY KEY
+      );
+      CREATE TABLE IF NOT EXISTS run_tasks (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        task_id TEXT NOT NULL,
+        approval TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'blocked', 'promoted', 'refused')),
+        result TEXT,
+        result_set INTEGER NOT NULL CHECK (result_set IN (0, 1)),
+        PRIMARY KEY (run_id, task_id),
+        CHECK ((result_set = 0 AND result IS NULL) OR (result_set = 1 AND result IS NOT NULL))
       );
     `);
     const schema = this.#db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'operations'").get();
@@ -259,5 +287,123 @@ export class Journal {
     ref = requireString(ref, 'ref');
     const row = this.#db.prepare("SELECT * FROM operations WHERE ref = ? AND status = 'prepared'").get(ref);
     return row ? operationFromRow(row) : null;
+  }
+
+  getTaskPromotion(runId, taskId) {
+    runId = requireString(runId, 'runId');
+    taskId = requireString(taskId, 'taskId');
+    const row = this.#db.prepare(`
+      SELECT * FROM operations
+      WHERE status = 'promoted'
+        AND json_extract(receipt, '$.runId') = ?
+        AND json_extract(receipt, '$.task.contract.id') = ?
+      ORDER BY rowid DESC
+      LIMIT 1
+    `).get(runId, taskId);
+    return row ? operationFromRow(row) : null;
+  }
+
+  registerRun(id, tasks) {
+    id = requireString(id, 'id');
+    if (!Array.isArray(tasks)) throw new TypeError('tasks must be an array');
+    const entries = tasks.map(task => {
+      if (!task || typeof task !== 'object' || !Object.hasOwn(task, 'approval')) {
+        throw new TypeError('each task must include an approval');
+      }
+      return {
+        id: requireString(task.id, 'task id'),
+        approval: canonicalJsonValue(task.approval, 'approval'),
+      };
+    });
+    if (new Set(entries.map(task => task.id)).size !== entries.length) {
+      throw new Error('task ids must be unique within a run');
+    }
+
+    return this.#transaction(() => {
+      const existing = this.#db.prepare('SELECT id FROM runs WHERE id = ?').get(id);
+      if (existing) {
+        const stored = this.#db.prepare(
+          'SELECT task_id, approval FROM run_tasks WHERE run_id = ? ORDER BY task_id',
+        ).all(id);
+        const approvals = new Map(stored.map(row => [row.task_id, row.approval]));
+        if (stored.length !== entries.length || entries.some(task => approvals.get(task.id) !== task.approval)) {
+          throw new Error(`run ${id} was already registered with a different task set`);
+        }
+        return this.runTasks(id);
+      }
+
+      this.#db.prepare('INSERT INTO runs (id) VALUES (?)').run(id);
+      const insert = this.#db.prepare(`
+        INSERT INTO run_tasks (run_id, task_id, approval, status, result, result_set)
+        VALUES (?, ?, ?, 'queued', NULL, 0)
+      `);
+      for (const task of entries) insert.run(id, task.id, task.approval);
+      return this.runTasks(id);
+    });
+  }
+
+  runTasks(id) {
+    id = requireString(id, 'id');
+    if (!this.#db.prepare('SELECT 1 FROM runs WHERE id = ?').get(id)) {
+      throw new Error(`unknown run ${id}`);
+    }
+    return this.#db.prepare('SELECT * FROM run_tasks WHERE run_id = ? ORDER BY task_id')
+      .all(id).map(taskFromRow);
+  }
+
+  startTask(run, id) {
+    run = requireString(run, 'run');
+    id = requireString(id, 'task id');
+    return this.#transaction(() => {
+      const row = this.#db.prepare('SELECT * FROM run_tasks WHERE run_id = ? AND task_id = ?').get(run, id);
+      if (!row) throw new Error(`unknown task ${id} in run ${run}`);
+      if (row.status === 'running') throw new Error(`task ${id} is already running`);
+      if (row.status !== 'queued') throw new Error(`task ${id} is ${row.status}, not queued`);
+      this.#db.prepare("UPDATE run_tasks SET status = 'running' WHERE run_id = ? AND task_id = ?")
+        .run(run, id);
+      return taskFromRow(this.#db.prepare('SELECT * FROM run_tasks WHERE run_id = ? AND task_id = ?').get(run, id));
+    });
+  }
+
+  finishTask(run, id, result) {
+    run = requireString(run, 'run');
+    id = requireString(id, 'task id');
+    const serialized = canonicalJsonValue(result, 'result');
+    return this.#transaction(() => {
+      const row = this.#db.prepare('SELECT * FROM run_tasks WHERE run_id = ? AND task_id = ?').get(run, id);
+      if (!row) throw new Error(`unknown task ${id} in run ${run}`);
+      if (['blocked', 'promoted', 'refused'].includes(row.status)) {
+        if (row.result_set === 1 && row.result === serialized) return taskFromRow(row);
+        throw new Error(`task ${id} already finished with a different result`);
+      }
+
+      let status = 'blocked';
+      if (row.status === 'running') {
+        status = JSON.parse(serialized)?.status;
+        if (!['promoted', 'refused'].includes(status)) {
+          throw new TypeError('running task result.status must be promoted or refused');
+        }
+      }
+      this.#db.prepare(`
+        UPDATE run_tasks SET status = ?, result = ?, result_set = 1
+        WHERE run_id = ? AND task_id = ?
+      `).run(status, serialized, run, id);
+      return taskFromRow(this.#db.prepare('SELECT * FROM run_tasks WHERE run_id = ? AND task_id = ?').get(run, id));
+    });
+  }
+
+  requeueTask(run, id) {
+    run = requireString(run, 'run');
+    id = requireString(id, 'task id');
+    return this.#transaction(() => {
+      const row = this.#db.prepare('SELECT * FROM run_tasks WHERE run_id = ? AND task_id = ?').get(run, id);
+      if (!row) throw new Error(`unknown task ${id} in run ${run}`);
+      if (row.status !== 'running') throw new Error(`task ${id} is ${row.status}, not running`);
+      this.#db.prepare(`
+        UPDATE run_tasks SET status = 'queued', result = NULL, result_set = 0
+        WHERE run_id = ? AND task_id = ?
+      `).run(run, id);
+      return taskFromRow(this.#db.prepare('SELECT * FROM run_tasks WHERE run_id = ? AND task_id = ?').get(run, id));
+    });
   }
 }

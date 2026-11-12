@@ -234,3 +234,117 @@ test('migrates existing journal records to the abandoned state schema', () => {
     cleanup();
   }
 });
+
+test('persists run identity by task set and approvals', () => {
+  const { path, cleanup } = fixture();
+  try {
+    let journal = new Journal(path);
+    const tasks = [
+      { id: 'task-b', approval: { principal: 'reviewer', scope: ['write'] } },
+      { id: 'task-a', approval: true },
+    ];
+    assert.deepEqual(journal.registerRun('run-1', tasks), [
+      { id: 'task-a', approval: true, status: 'queued', result: null },
+      { id: 'task-b', approval: { principal: 'reviewer', scope: ['write'] }, status: 'queued', result: null },
+    ]);
+    journal.close();
+
+    journal = new Journal(path);
+    assert.equal(journal.startTask('run-1', 'task-a').status, 'running');
+    const retryTasks = [...tasks].reverse().map(task => task.id === 'task-b'
+      ? { ...task, approval: { scope: ['write'], principal: 'reviewer' } }
+      : task);
+    assert.equal(journal.registerRun('run-1', retryTasks)[0].status, 'running');
+    assert.throws(() => journal.registerRun('run-1', [
+      { id: 'task-a', approval: true },
+      { id: 'task-b', approval: { principal: 'reviewer', scope: ['read'] } },
+    ]), /different task set/);
+    assert.throws(() => journal.registerRun('run-1', [
+      { id: 'task-a', approval: true },
+      { id: 'task-a', approval: false },
+    ]), /unique/);
+    journal.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('enforces task transitions and idempotent terminal results', () => {
+  const { path, cleanup } = fixture();
+  try {
+    const journal = new Journal(path);
+    journal.registerRun('run-1', [
+      { id: 'promote', approval: 'approved' },
+      { id: 'refuse', approval: 'approved' },
+      { id: 'block', approval: 'approved' },
+    ]);
+    assert.equal(journal.startTask('run-1', 'promote').status, 'running');
+    assert.throws(() => journal.startTask('run-1', 'promote'), /already running/);
+    const promoted = journal.finishTask('run-1', 'promote', { status: 'promoted', receipt: 'r1' });
+    assert.equal(promoted.status, 'promoted');
+    assert.deepEqual(journal.finishTask('run-1', 'promote', { receipt: 'r1', status: 'promoted' }), promoted);
+    assert.throws(() => journal.finishTask('run-1', 'promote', { status: 'refused' }), /different result/);
+
+    const blocked = journal.finishTask('run-1', 'block', { reason: 'not started' });
+    assert.equal(blocked.status, 'blocked');
+    assert.deepEqual(journal.finishTask('run-1', 'block', { reason: 'not started' }), blocked);
+    assert.throws(() => journal.finishTask('run-1', 'block', { reason: 'changed' }), /different result/);
+    assert.equal(journal.startTask('run-1', 'refuse').status, 'running');
+    assert.equal(journal.finishTask('run-1', 'refuse', { status: 'refused' }).status, 'refused');
+    assert.throws(() => journal.finishTask('run-1', 'missing', { status: 'refused' }), /unknown task/);
+    assert.throws(() => journal.startTask('unknown-run', 'promote'), /unknown task/);
+    assert.deepEqual(journal.runTasks('run-1').map(task => task.status), ['blocked', 'promoted', 'refused']);
+    journal.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('requeues only running tasks as an explicit transition', () => {
+  const { path, cleanup } = fixture();
+  try {
+    const journal = new Journal(path);
+    journal.registerRun('run-1', [{ id: 'task-a', approval: true }]);
+    assert.throws(() => journal.requeueTask('run-1', 'task-a'), /not running/);
+    journal.startTask('run-1', 'task-a');
+    assert.equal(journal.requeueTask('run-1', 'task-a').status, 'queued');
+    assert.equal(journal.startTask('run-1', 'task-a').status, 'running');
+    assert.equal(journal.finishTask('run-1', 'task-a', { status: 'promoted' }).status, 'promoted');
+    assert.throws(() => journal.requeueTask('run-1', 'task-a'), /not running/);
+    journal.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('finds the latest promoted operation recorded for a run task', () => {
+  const { path, cleanup } = fixture();
+  try {
+    const journal = new Journal(path);
+    start(journal);
+    const promote = (id, refName, old, next) => {
+      journal.prepare(request({
+        id,
+        ref: refName,
+        old,
+        next,
+        receipt: { runId: 'run-1', task: { contract: { id: 'task-a' } } },
+      }));
+      let ref = old;
+      return journal.promote(id, {
+        readRef: () => ref,
+        recheck: () => true,
+        updateRef: (_ref, target) => { ref = target; },
+      });
+    };
+
+    assert.equal(journal.getTaskPromotion('run-1', 'task-a'), null);
+    promote('op-1', 'refs/heads/one', 'one-a', 'one-b');
+    const latest = promote('op-2', 'refs/heads/two', 'two-a', 'two-b');
+    assert.equal(journal.getTaskPromotion('run-1', 'task-a').id, latest.id);
+    assert.equal(journal.getTaskPromotion('run-other', 'task-a'), null);
+    journal.close();
+  } finally {
+    cleanup();
+  }
+});
