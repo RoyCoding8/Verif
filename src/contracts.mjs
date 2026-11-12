@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 const levels = new Map([['tested', 0], ['bounded', 1], ['formal', 2]]);
-const methods = new Map([['node-test', 'tested'], ['finite-domain', 'bounded']]);
+const methods = new Map([['node-test', 'tested'], ['finite-domain', 'bounded'], ['lean-comparator', 'formal']]);
 
 export function requireThat(condition, message) {
   if (!condition) throw new Error(message);
@@ -26,6 +26,17 @@ export function digest(record) {
 
 export function text(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function leanName(value) {
+  return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(value);
+}
+
+export function parseLeanOracle(oracle) {
+  requireThat(leanName(oracle?.theorem) && safePath(oracle.solution) && oracle.solution.endsWith('.lean') &&
+    text(oracle.challenge) && oracle.challenge.isWellFormed(), 'Lean oracle needs a theorem name, solution path, and challenge source');
+  const { theorem, solution, challenge } = oracle;
+  return { theorem, solution, challenge };
 }
 
 export function safePath(value) {
@@ -133,6 +144,8 @@ function normalizeObligation(obligation, claims) {
   requireThat(expect !== 'FAIL' || cases.includes(witness), 'Expected failure must name a declared case');
   requireThat(method !== 'finite-domain' || (specification.domain && cases.length === domainSize(specification.domain)),
     'Finite-domain obligations must list a case for every input in the declared domain');
+  requireThat(method !== 'lean-comparator' || (expect === 'PASS' && cases.length === 1 && leanName(cases[0])),
+    'Lean obligations require one named theorem and an expected PASS');
   return { id: obligation.id, claim, subject, expect, witness, method, oracle, outputs, cases, timeoutMs: obligation.timeoutMs };
 }
 

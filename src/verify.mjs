@@ -1,13 +1,25 @@
 import { execFile } from 'node:child_process';
 import { lstat, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { assertExhaustiveDomain, compose, digest, evidenceKeys, hash, requireThat, safePath, text, within } from './contracts.mjs';
+import { assertExhaustiveDomain, compose, digest, evidenceKeys, hash, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
+import { judgeLean, leanEnvironment } from './lean-judge.mjs';
 
 const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
 const evaluator = await readFile(new URL('./evaluate.mjs', import.meta.url));
 const environment = { runtime: process.version, platform: process.platform, arch: process.arch, adapter: hash(evaluator) };
+const proofEnvironment = { ...environment, lean: leanEnvironment,
+  adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs'].map(async path =>
+    hash(await readFile(new URL(path, import.meta.url)))))) };
+
+function environmentFor(plan) {
+  return plan.obligations.some(o => o.method === 'lean-comparator') ? { ...environment, proof: proofEnvironment } : environment;
+}
+
+function evidenceEnvironment(obligation) {
+  return obligation.method === 'lean-comparator' ? proofEnvironment : environment;
+}
 
 async function regularFile(root, name, limit = maxArtifactSize) {
   const file = join(root, name);
@@ -31,8 +43,7 @@ async function assertMaterialization(root, manifest) {
   }
 }
 
-function readReport(stdout, obligation) {
-  const report = JSON.parse(stdout);
+function readReport(report, obligation) {
   requireThat(Array.isArray(report?.cases) && report.cases.length === obligation.cases.length, 'Incomplete case report for ' + obligation.id);
   const observed = new Map();
   for (const item of report.cases) {
@@ -51,54 +62,75 @@ export function subjectFor(obligation, base, candidate) {
   return obligation.subject;
 }
 
+async function evaluateLean({ oracle, obligation, workspace, manifest, timeout, signal, temp }) {
+  const { theorem, solution, challenge } = parseLeanOracle(oracle);
+  requireThat(theorem === obligation.cases[0], 'Lean theorem does not match obligation ' + obligation.id);
+  requireThat(manifest.files.some(file => file.path === solution), 'Missing Lean solution: ' + solution);
+  const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await regularFile(workspace, solution));
+  const { accepted, stdout, stderr } = await judgeLean({
+    challenge, solution: source, theorem, timeoutMs: timeout, signal, scratch: resolve(temp),
+  });
+  const cases = [{ id: theorem, status: accepted ? 'PASS' : 'FAIL' }];
+  return { cases, level: 'formal', stdout, stderr, exit: accepted ? 0 : 1,
+    output: { cases, theorem, stdout, stderr } };
+}
+
+async function evaluateNode({ oracle: cases, obligation, claim, workspace, manifest, timeout, signal, temp }) {
+  const evaluatorFile = join(temp, 'evaluate.mjs');
+  const request = join(temp, 'request.json');
+  requireThat(Array.isArray(cases) && digest(cases.map(item => item.id)) === digest(obligation.cases),
+    'Oracle case IDs do not match obligation ' + obligation.id);
+  const inputs = cases.map(({ id, module, name, args, expected }) => {
+    requireThat(safePath(module) && manifest.files.some(file => file.path === module) &&
+      text(name) && Array.isArray(args) && expected !== undefined, 'Invalid oracle case ' + id);
+    return { id, module, name, args };
+  });
+  if (obligation.method === 'finite-domain') assertExhaustiveDomain(claim.domain, inputs);
+  await writeFile(evaluatorFile, evaluator, { flag: 'wx' });
+  await writeFile(request, JSON.stringify(inputs), { flag: 'wx' });
+  const env = { LANG: 'C', TZ: 'UTC', HOME: temp, USERPROFILE: temp, TMP: temp, TEMP: temp, TMPDIR: temp };
+  if (process.platform === 'win32' && process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
+  const readPaths = await Promise.all([workspace, evaluatorFile, request].map(path => realpath(path)));
+  const { stdout, stderr } = await execute(process.execPath, [
+    '--permission', ...readPaths.map(path => '--allow-fs-read=' + path), evaluatorFile, workspace, request,
+  ], {
+    cwd: workspace, env, timeout, signal, killSignal: 'SIGKILL', maxBuffer: maxArtifactSize, windowsHide: true,
+  });
+  const observations = JSON.parse(stdout);
+  requireThat(Array.isArray(observations) && observations.length === cases.length, 'Incomplete observations for ' + obligation.id);
+  const observedCases = observations.map(({ id, actual }, index) => {
+    requireThat(id === cases[index].id && actual !== undefined, 'Wrong observation for ' + obligation.id);
+    return { id, status: digest(actual) === digest(cases[index].expected) ? 'PASS' : 'FAIL' };
+  });
+  return { cases: observedCases, level: obligation.method === 'finite-domain' ? 'bounded' : 'tested',
+    stdout, stderr, exit: 0, output: { cases: observedCases, observations } };
+}
+
 async function runObligation({ repo, obligation, claim, commit, oracleRoot, scratch, signal, deadline }) {
   const temp = await mkdtemp(join(scratch, 'check-'));
   try {
     const workspace = join(temp, 'subject');
-    const evaluatorFile = join(temp, 'evaluate.mjs');
-    const request = join(temp, 'request.json');
     const bytes = await regularFile(oracleRoot, obligation.oracle.file);
     requireThat(hash(bytes) === obligation.oracle.digest, 'Oracle digest changed for ' + obligation.id);
     const manifest = repo.materialize(commit, workspace);
     await assertMaterialization(workspace, manifest);
-    const cases = JSON.parse(bytes.toString('utf8'));
-    requireThat(Array.isArray(cases) && digest(cases.map(item => item.id)) === digest(obligation.cases),
-      'Oracle case IDs do not match obligation ' + obligation.id);
-    const inputs = cases.map(({ id, module, name, args, expected }) => {
-      requireThat(safePath(module) && manifest.files.some(file => file.path === module) &&
-        text(name) && Array.isArray(args) && expected !== undefined, 'Invalid oracle case ' + id);
-      return { id, module, name, args };
-    });
-    if (obligation.method === 'finite-domain') assertExhaustiveDomain(claim.domain, inputs);
-    await writeFile(evaluatorFile, evaluator, { flag: 'wx' });
-    await writeFile(request, JSON.stringify(inputs), { flag: 'wx' });
     const timeout = Math.min(obligation.timeoutMs, deadline - Date.now());
     requireThat(timeout > 0, 'Task budget expired');
-    const env = { LANG: 'C', TZ: 'UTC', HOME: temp, USERPROFILE: temp, TMP: temp, TEMP: temp, TMPDIR: temp };
-    if (process.platform === 'win32' && process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    const readPaths = await Promise.all([workspace, evaluatorFile, request].map(path => realpath(path)));
-    const { stdout, stderr } = await execute(process.execPath, [
-      '--permission', ...readPaths.map(path => '--allow-fs-read=' + path), evaluatorFile, workspace, request,
-    ], {
-      cwd: workspace, env, timeout, signal, killSignal: 'SIGKILL', maxBuffer: maxArtifactSize, windowsHide: true,
+    const evaluate = obligation.method === 'lean-comparator' ? evaluateLean : evaluateNode;
+    const { cases, level, stdout, stderr, exit, output } = await evaluate({
+      oracle: JSON.parse(bytes.toString('utf8')), obligation, claim, workspace, manifest, timeout, signal, temp,
     });
-    const observations = JSON.parse(stdout);
-    requireThat(Array.isArray(observations) && observations.length === cases.length, 'Incomplete observations for ' + obligation.id);
-    const observedCases = observations.map(({ id, actual }, index) => {
-      requireThat(id === cases[index].id && actual !== undefined, 'Wrong observation for ' + obligation.id);
-      return { id, status: digest(actual) === digest(cases[index].expected) ? 'PASS' : 'FAIL' };
-    });
-    const report = readReport(JSON.stringify({ cases: observedCases }), obligation);
+    const report = readReport({ cases }, obligation);
     await assertMaterialization(workspace, manifest);
     const artifacts = Object.fromEntries(obligation.outputs.map(path => {
-      const contents = Buffer.from(JSON.stringify({ cases: observedCases, observations }));
+      const contents = Buffer.from(JSON.stringify(output));
       return [path, { digest: hash(contents), base64: contents.toString('base64') }];
     }));
     return {
       id: obligation.id, ...report, commit, manifest,
-      level: obligation.method === 'finite-domain' ? 'bounded' : 'tested',
-      keys: evidenceKeys(obligation, claim, commit, manifest, environment),
-      observation: { stdout: hash(stdout), stderr: hash(stderr), exit: 0 },
+      level,
+      keys: evidenceKeys(obligation, claim, commit, manifest, evidenceEnvironment(obligation)),
+      observation: { stdout: hash(stdout), stderr: hash(stderr), exit },
       outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])),
       artifacts,
     };
@@ -116,7 +148,7 @@ export async function verify({ repo, task, base, candidate, oracleRoot, scratch,
     results.push(await runObligation({ repo, obligation, claim, commit, oracleRoot, scratch, signal, deadline }));
   }
   const assurance = compose(task.plan, results);
-  return { version: 1, contract: task.approval, plan: task.contract.plan, base, candidate, environment, results, assurance };
+  return { version: 1, contract: task.approval, plan: task.contract.plan, base, candidate, environment: environmentFor(task.plan), results, assurance };
 }
 
 export async function checkFeedback({ repo, task, name, base, candidate, oracleRoot, scratch, signal, deadline }) {
@@ -135,7 +167,7 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
     requireThat(now < deadline, 'Task budget expired');
     requireThat(digest(contract) === approval && digest(plan) === contract.plan, 'Unapproved contract or plan');
     requireThat(receipt.version === 1 && receipt.contract === approval && receipt.plan === contract.plan &&
-      receipt.base === base && receipt.candidate === candidate && digest(receipt.environment) === digest(environment),
+      receipt.base === base && receipt.candidate === candidate && digest(receipt.environment) === digest(environmentFor(plan)),
     'Receipt identity mismatch');
     requireThat(changedPaths.length > 0 && changedPaths.every(path =>
       within(path, contract.scope.write) && !within(path, contract.scope.forbidden)), 'Candidate changed paths outside approved scope');
@@ -146,10 +178,11 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
       const subject = subjectFor(obligation, base, candidate);
       const manifest = manifests.get(subject);
       requireThat(result.commit === subject && digest(result.manifest) === digest(manifest) &&
-        digest(result.keys) === digest(evidenceKeys(obligation, claim, subject, manifest, environment)),
+        digest(result.keys) === digest(evidenceKeys(obligation, claim, subject, manifest, evidenceEnvironment(obligation))),
       'Stale evidence for ' + obligation.id);
-      const report = readReport(JSON.stringify({ cases: result.cases }), obligation);
+      const report = readReport({ cases: result.cases }, obligation);
       requireThat(report.status === result.status && report.witness === result.witness, 'Receipt verdict mismatch');
+      requireThat(obligation.method !== 'lean-comparator' || result.observation?.exit === 0, 'Lean proof was not accepted');
       requireThat(Object.keys(result.artifacts).length === obligation.outputs.length &&
         obligation.outputs.every(path => result.artifacts[path]?.digest === result.outputs[path] &&
           hash(Buffer.from(result.artifacts[path].base64, 'base64')) === result.outputs[path]), 'Receipt artifact mismatch');
