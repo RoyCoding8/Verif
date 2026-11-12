@@ -20,10 +20,10 @@ function git(cwd, ...args) {
   return Buffer.isBuffer(output) ? output : output.trim();
 }
 
-function repo(name) {
+function repo(name, objectFormat = 'sha1') {
   const root = path.join(tmp, name);
   fs.mkdirSync(root, { recursive: true });
-  git(root, 'init', '--quiet', '--initial-branch=main');
+  git(root, 'init', '--quiet', '--initial-branch=main', `--object-format=${objectFormat}`);
   git(root, 'config', 'user.name', 'Test');
   git(root, 'config', 'user.email', 'test@invalid');
   return root;
@@ -48,6 +48,9 @@ test('reads and updates refs with compare-and-swap', () => {
   assert.throws(() => adapter.updateRef('refs/heads/verity', second, null));
   adapter.updateRef('refs/heads/verity', second, first);
   assert.equal(adapter.readRef('refs/heads/verity'), second);
+  git(root, 'symbolic-ref', 'refs/heads/alias', 'refs/heads/main');
+  assert.throws(() => adapter.readRef('refs/heads/alias'), /Symbolic branch refs/);
+  assert.throws(() => adapter.updateRef('refs/heads/alias', first, second), /Symbolic branch refs/);
   assert.throws(() => adapter.updateRef('refs/heads/-option', second, first));
 });
 
@@ -77,17 +80,28 @@ test('reports sorted paths and materializes exact blob bytes and executable mode
 
 test('forks without a remote, captures changed workspace bytes, and creates a promotion commit', () => {
   const root = repo('controller');
-  fs.writeFileSync(path.join(root, 'tracked.txt'), 'base');
+  fs.writeFileSync(path.join(root, '.gitattributes'), '*.txt text eol=crlf\n');
+  fs.writeFileSync(path.join(root, 'tracked.txt'), 'base\n');
+  fs.mkdirSync(path.join(root, 'tools'));
+  fs.writeFileSync(path.join(root, 'tools', 'run.sh'), 'base script\n');
+  git(root, 'add', '-A');
+  git(root, 'update-index', '--chmod=+x', 'tools/run.sh');
   const base = commit(root, 'base');
   const adapter = new GitRepo(root);
   const candidatePath = path.join(tmp, 'candidate');
   const candidate = adapter.fork(base, candidatePath);
   assert.equal(git(candidatePath, 'remote').trim(), '');
   assert.equal(git(candidatePath, 'rev-parse', 'HEAD'), base);
+  assert.equal(fs.readFileSync(path.join(candidatePath, 'tracked.txt'), 'utf8'), 'base\n');
+  assert.equal(fs.readFileSync(path.join(candidatePath, 'tools', 'run.sh'), 'utf8'), 'base script\n');
   fs.writeFileSync(path.join(candidatePath, 'tracked.txt'), 'worker edit');
-  fs.writeFileSync(path.join(candidatePath, 'new.txt'), 'new file');
+  fs.mkdirSync(path.join(candidatePath, 'deep', 'nest'), { recursive: true });
+  fs.writeFileSync(path.join(candidatePath, 'deep', 'nest', 'new.txt'), 'new file');
   const captured = adapter.capture(candidatePath, base);
-  assert.deepEqual(adapter.changedPaths(base, captured), ['new.txt', 'tracked.txt']);
+  assert.deepEqual(adapter.changedPaths(base, captured), ['deep/nest/new.txt', 'tracked.txt']);
+  const capturedFiles = adapter.materialize(captured, path.join(tmp, 'captured'));
+  assert.equal(capturedFiles.files.find(({ path: file }) => file === 'tools/run.sh').mode, '100755');
+  assert.deepEqual(fs.readFileSync(path.join(tmp, 'captured', 'deep', 'nest', 'new.txt')), Buffer.from('new file'));
   const promotion = adapter.promotionCommit({
     tree: adapter.tree(captured), parent: base, operation: 'promote-42', receipt: 'a'.repeat(64),
   });
@@ -95,6 +109,39 @@ test('forks without a remote, captures changed workspace bytes, and creates a pr
   assert.equal(git(root, 'show', '-s', '--format=%B', promotion).includes('Operation: promote-42'), true);
   assert.equal(git(root, 'show', '-s', '--format=%B', promotion).includes(`Receipt: ${'a'.repeat(64)}`), true);
   assert.throws(() => adapter.promotionCommit({ tree: adapter.tree(captured), parent: base, operation: 'bad', receipt: 'short' }));
+});
+
+test('uses a bare SHA256 controller for ref CAS, promotion, nested capture, and matching forks', (context) => {
+  const seed = path.join(tmp, 'sha256-seed');
+  fs.mkdirSync(seed);
+  try { git(seed, 'init', '--quiet', '--initial-branch=main', '--object-format=sha256'); }
+  catch { context.skip('Git does not support SHA256 repositories'); return; }
+  git(seed, 'config', 'user.name', 'Test');
+  git(seed, 'config', 'user.email', 'test@invalid');
+  fs.mkdirSync(path.join(seed, 'a', 'b'), { recursive: true });
+  fs.writeFileSync(path.join(seed, 'a', 'b', 'base.txt'), 'base');
+  const base = commit(seed, 'base');
+  const bare = path.join(tmp, 'sha256-controller.git');
+  fs.mkdirSync(bare);
+  git(bare, 'init', '--quiet', '--bare', '--object-format=sha256');
+  git(bare, 'fetch', '--quiet', seed, base);
+  git(bare, 'update-ref', 'refs/heads/main', base);
+  const adapter = new GitRepo(bare);
+  assert.equal(adapter.readRef('refs/heads/main'), base);
+  adapter.updateRef('refs/heads/verity', base, null);
+  assert.equal(adapter.readRef('refs/heads/verity'), base);
+  assert.throws(() => adapter.readRef('refs/tags/main'));
+
+  const candidatePath = path.join(tmp, 'sha256-candidate');
+  const candidate = adapter.fork(base, candidatePath);
+  assert.equal(git(candidatePath, 'rev-parse', '--show-object-format'), 'sha256');
+  assert.equal(fs.readFileSync(path.join(candidatePath, 'a', 'b', 'base.txt'), 'utf8'), 'base');
+  fs.mkdirSync(path.join(candidatePath, 'a', 'new'), { recursive: true });
+  fs.writeFileSync(path.join(candidatePath, 'a', 'new', 'nested.txt'), 'nested');
+  const captured = adapter.capture(candidatePath, base);
+  assert.deepEqual(adapter.changedPaths(base, captured), ['a/new/nested.txt']);
+  const promotion = adapter.promotionCommit({ tree: adapter.tree(captured), parent: base, operation: 'sha256-test', receipt: 'b'.repeat(64) });
+  assert.equal(adapter.tree(promotion), adapter.tree(captured));
 });
 
 test('merges disjoint candidate changes and refuses conflicts', () => {

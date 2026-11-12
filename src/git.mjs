@@ -55,7 +55,7 @@ function oid(value, label = 'object id') {
 }
 
 function refName(value) {
-  if (typeof value !== 'string' || value.startsWith('-') || value.startsWith('/') || value.includes('\0')) {
+  if (typeof value !== 'string' || !value.startsWith('refs/heads/') || value.startsWith('-') || value.includes('\0')) {
     throw new Error('Invalid ref');
   }
   try { run(process.cwd(), ['check-ref-format', value]); }
@@ -66,11 +66,22 @@ function refName(value) {
 function canonicalRepo(root) {
   const abs = path.resolve(root);
   const requested = fs.realpathSync(abs);
-  const top = run(abs, ['rev-parse', '--show-toplevel']).trim();
-  if (!top) throw new Error(`Not a Git worktree: ${abs}`);
-  const canonicalTop = fs.realpathSync(top);
-  if (canonicalTop !== requested) throw new Error(`Git worktree root does not match requested path: ${abs}`);
-  return canonicalTop;
+  const isBare = run(abs, ['rev-parse', '--is-bare-repository']).trim() === 'true';
+  const repoRoot = isBare ? run(abs, ['rev-parse', '--absolute-git-dir']).trim() : run(abs, ['rev-parse', '--show-toplevel']).trim();
+  if (!repoRoot) throw new Error(`Not a Git repository: ${abs}`);
+  const canonicalRoot = fs.realpathSync(repoRoot);
+  if (canonicalRoot !== requested) throw new Error(`Git repository root does not match requested path: ${abs}`);
+  return canonicalRoot;
+}
+
+function assertDirectRef(repo, ref) {
+  try {
+    const target = run(repo, ['symbolic-ref', '--quiet', ref]).trim();
+    if (target) throw new Error(`Symbolic branch refs are not supported: ${ref}`);
+  } catch (error) {
+    if (error.message.startsWith('Symbolic branch refs')) throw error;
+    if (error.status !== 1) throw error;
+  }
 }
 
 function ensureCommit(repo, commit) {
@@ -158,6 +169,7 @@ export class GitRepo {
 
   readRef(ref) {
     refName(ref);
+    assertDirectRef(this.#root, ref);
     try { return run(this.#root, ['rev-parse', '--verify', '--quiet', `${ref}^{object}`]).trim(); }
     catch (error) {
       if (error.status === 1) return null;
@@ -167,9 +179,10 @@ export class GitRepo {
 
   updateRef(ref, next, old) {
     refName(ref);
+    assertDirectRef(this.#root, ref);
     oid(next, 'new object id');
     const expected = old === null ? '0'.repeat(this.#objectFormat === 'sha1' ? 40 : 64) : oid(old, 'expected object id');
-    run(this.#root, ['update-ref', ref, next, expected]);
+    run(this.#root, ['update-ref', '--no-deref', ref, next, expected]);
   }
 
   changedPaths(base, candidate) {
@@ -233,10 +246,11 @@ export class GitRepo {
     const target = safeDestination(destination);
     const temp = fs.mkdtempSync(path.join(target.parentReal, '.verity-fork-'));
     try {
-      fs.mkdirSync(path.join(temp, '.git'));
-      run(temp, ['init', '--quiet', '--initial-branch=verity-candidate']);
+      this.materialize(commit, temp);
+      run(temp, ['init', '--quiet', '--initial-branch=verity-candidate', `--object-format=${this.#objectFormat}`]);
       run(temp, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', this.#root, commit]);
-      run(temp, ['checkout', '--quiet', '--detach', commit]);
+      run(temp, ['update-ref', '--no-deref', 'HEAD', commit]);
+      run(temp, ['read-tree', commit]);
       if (fs.existsSync(target.abs)) fs.rmdirSync(target.abs);
       fs.renameSync(temp, target.abs);
     } catch (error) {
@@ -258,6 +272,7 @@ export class GitRepo {
       throw new Error('Capture workspace must be independent of the controller repository');
     }
     const files = [];
+    const baseModes = new Map(entries(this.#root, base).map(({ path: file, mode }) => [file, mode]));
     const visit = (directory, prefix = '') => {
       for (const name of fs.readdirSync(directory)) {
         if (!prefix && name === '.git') continue;
@@ -265,18 +280,37 @@ export class GitRepo {
         const abs = path.join(directory, name);
         const stat = fs.lstatSync(abs);
         if (stat.isDirectory()) visit(abs, rel);
-        else if (stat.isFile()) files.push({ path: rel, mode: (stat.mode & 0o111) ? '100755' : '100644', bytes: fs.readFileSync(abs) });
+        else if (stat.isFile()) {
+          const mode = process.platform === 'win32' && baseModes.has(rel)
+            ? baseModes.get(rel)
+            : (stat.mode & 0o111) ? '100755' : '100644';
+          files.push({ path: rel, mode, bytes: fs.readFileSync(abs) });
+        }
         else throw new Error(`Unsupported workspace entry at ${rel}`);
       }
     };
     visit(root);
     assertPortableSet(files.map((file) => file.path));
     files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-    const records = files.map((file) => {
+    const rootNode = { files: [], dirs: new Map() };
+    for (const file of files) {
+      const segments = file.path.split('/');
+      let node = rootNode;
+      for (const segment of segments.slice(0, -1)) {
+        if (!node.dirs.has(segment)) node.dirs.set(segment, { files: [], dirs: new Map() });
+        node = node.dirs.get(segment);
+      }
       const blob = run(this.#root, ['hash-object', '-w', '--stdin'], file.bytes).trim();
-      return `${file.mode} blob ${blob}\t${file.path}\0`;
-    }).join('');
-    const tree = run(this.#root, ['mktree', '-z'], Buffer.from(records)).trim();
+      node.files.push({ name: segments.at(-1), mode: file.mode, type: 'blob', oid: blob });
+    }
+    const writeTree = (node) => {
+      const records = [
+        ...node.files,
+        ...[...node.dirs].map(([name, child]) => ({ name, mode: '040000', type: 'tree', oid: writeTree(child) })),
+      ].map(({ name, mode, type, oid: object }) => `${mode} ${type} ${object}\t${name}\0`).join('');
+      return run(this.#root, ['mktree', '-z'], Buffer.from(records)).trim();
+    };
+    const tree = writeTree(rootNode);
     const receipt = crypto.createHash('sha256').update(tree).digest('hex');
     const message = commitMessage('capture', receipt);
     return run(this.#root, ['-c', 'user.name=Verity', '-c', 'user.email=verity@invalid', 'commit-tree', tree, '-p', base], Buffer.from(message)).trim();
