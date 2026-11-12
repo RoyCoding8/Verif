@@ -8,7 +8,7 @@ The exported theorem supportsWeakestWithExact proves the threshold rule for any 
 
 The JSON fixtures are a finite executable comparison with the current JavaScript implementation, not a proof of equivalence for all JavaScript inputs.
 
-The Lean fixture interpreter assumes claims are listed in topological order and dependency numbers refer to earlier rows. Each claim has at least one positive candidate result. Every claim must be transitively reachable from at least one declared root; the fixture interpreter checks that roots exist, while this coverage condition is maintained by the fixture author and enforced by the JavaScript plan validator. Evidence values 0 and 1 correspond to node-test and finite-domain in src/contracts.mjs. The model includes formal as a guarantee level, but the current JavaScript method registry has no direct formal method, so a formal evidence value is rejected by the fixture boundary.
+The Lean fixture interpreter assumes claims are listed in topological order and dependency numbers refer to earlier rows. Each claim has at least one positive candidate result. The fixture author ensures every claim is reachable from an acceptance root, and the JavaScript planner checks that coverage. Evidence values 0, 1, and 2 represent accepted results from `node-test`, `finite-domain`, and `lean-comparator`. The comparison supplies results directly to the composer. The Linux proof workflow exercises actual Comparator execution separately.
 
 A finite-domain number represents the identity of a normalized finite domain. The fixture bridge maps it to a singleton JSON domain. This models the domain equality decision, not digest canonicalization or finite enumeration. The JavaScript implementation remains responsible for IDs, claim statements, dependency binding, cycles, authorization, oracle digests, subjects, cases, outputs, timeouts, exhaustive-domain checks, and exact evidence completeness. The comparison covers only the listed examples and does not prove those JavaScript paths correct.
 
@@ -27,4 +27,4 @@ lake exe contractFixtures > lean-results.json
 node compare.mjs lean-results.json
 ~~~
 
-The finite fixture includes positive tested and bounded paths, a bounded chain, weakest-evidence selection, bounded-domain mismatch, a missing finite domain, and two insufficient-threshold rejections. The expected values live beside each input in fixtures.json; the Lean executable checks them before printing results.
+The fixtures include each assurance level, domain mismatches, and requirements that fail when a dependency has lower assurance. The Lean executable checks each outcome against the expected values in `fixtures.json` before printing results.

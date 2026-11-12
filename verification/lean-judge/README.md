@@ -44,7 +44,7 @@ On Linux with Node 24, run:
 
 The test uses a real pinned Lake Comparator and checks one matching proof, one disallowed axiom, a weaker statement, and a missing theorem. It also checks that challenge and solution files are kept in separate projects, setup errors do not become acceptance, and credentials and tool override variables are not passed to the judge process.
 
-The GitHub workflow installs the official Lean release asset by its SHA-256, checks that bubblewrap can start, then runs these fixtures. It also runs the root obligation end-to-end file on Node 24 whenever that file exists.
+The GitHub workflow installs the official Lean release asset by its SHA-256, checks that bubblewrap can start, then runs these fixtures. It also exercises proof rejection, repair, and promotion through the controller on Node 24.
 
 ## References
 

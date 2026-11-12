@@ -42,6 +42,7 @@ jobs:
         run: node --test test/lean-judge.test.mjs
         env:
           VERITY_LEAN_SMOKE: "1"
-      - name: Optional root obligation end-to-end
-        shell: bash
-        run: if test -f test/lean-obligation.test.mjs; then VERITY_LEAN_SMOKE=1 node --test test/lean-obligation.test.mjs; fi
+      - name: Check proof repair and protected-branch promotion
+        run: node --test test/lean-obligation.test.mjs
+        env:
+          VERITY_LEAN_SMOKE: "1"

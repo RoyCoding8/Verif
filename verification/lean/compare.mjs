@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { compose, planVerification } from "../../src/contracts.mjs";
 
 const grades = ["tested", "bounded", "formal"];
+const methods = ["node-test", "finite-domain", "lean-comparator"];
 const cases = JSON.parse(readFileSync(new URL("./fixtures.json", import.meta.url), "utf8"));
 const leanResults = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const domainFor = (id) => id === null
@@ -28,7 +29,7 @@ function runJavaScriptCase(testCase) {
       claim: claim.id,
       subject: "candidate",
       expect: "PASS",
-      method: grade === 0 ? "node-test" : grade === 1 ? "finite-domain" : "deductive",
+      method: methods[grade] ?? "unknown-fixture-method",
       oracle: { file: "fixtures/oracle.json", digest: "0".repeat(64) },
       outputs: [],
       cases: ["only"],
@@ -55,7 +56,7 @@ function runJavaScriptCase(testCase) {
   const results = plan.obligations.map((obligation) => ({
     id: obligation.id,
     status: obligation.expect,
-    level: obligation.method === "node-test" ? "tested" : "bounded",
+    level: grades[methods.indexOf(obligation.method)],
     outputs: {}
   }));
   const composed = compose(plan, results);
@@ -71,4 +72,4 @@ assert.deepEqual(
   leanResults,
   "Lean reference and JavaScript contract disagree on a finite fixture"
 );
-console.log("8 finite cases matched src/contracts.mjs");
+console.log(`${cases.length} finite cases matched src/contracts.mjs`);

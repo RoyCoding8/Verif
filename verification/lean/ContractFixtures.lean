@@ -28,15 +28,10 @@ structure FixtureOutput where
   effective : List Nat
   deriving ToJson, Repr
 
-def requiredLevel : Nat → Option Assurance
+def assuranceLevel : Nat → Option Assurance
   | 0 => some .tested
   | 1 => some .bounded
   | 2 => some .formal
-  | _ => none
-
-def evidenceLevel : Nat → Option Assurance
-  | 0 => some .tested
-  | 1 => some .bounded
   | _ => none
 
 def weakestList? : List Assurance → Option Assurance
@@ -48,8 +43,8 @@ def evaluateFrom (remaining all : List ClaimRow) (done : List Assurance) :
   match remaining with
   | [] => pure done
   | row :: rest =>
-      let required ← requiredLevel row.required
-      let evidence ← row.evidence.mapM evidenceLevel
+      let required ← assuranceLevel row.required
+      let evidence ← row.evidence.mapM assuranceLevel
       let direct ← weakestList? evidence
       let dependencies ← row.dependencies.mapM (fun index =>
         if index < done.length then done[index]? else none)

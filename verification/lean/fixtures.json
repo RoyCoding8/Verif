@@ -82,5 +82,36 @@
     "expectedAccepted": false,
     "expectedEffective": [],
     "expectedJsError": "Finite-domain obligations must list a case for every input in the declared domain"
+  },
+  {
+    "name": "formal-chain-preserves-formal",
+    "roots": [1],
+    "claims": [
+      {"id": "proof", "required": 2, "evidence": [2], "domain": null, "dependencies": []},
+      {"id": "linked-proof", "required": 2, "evidence": [2], "domain": null, "dependencies": [0]}
+    ],
+    "expectedAccepted": true,
+    "expectedEffective": [2, 2]
+  },
+  {
+    "name": "bounded-dependency-caps-formal-result",
+    "roots": [1],
+    "claims": [
+      {"id": "enumerated", "required": 1, "evidence": [1], "domain": 9, "dependencies": []},
+      {"id": "proved", "required": 1, "evidence": [2], "domain": 9, "dependencies": [0]}
+    ],
+    "expectedAccepted": true,
+    "expectedEffective": [1, 1]
+  },
+  {
+    "name": "bounded-dependency-blocks-required-formal",
+    "roots": [1],
+    "claims": [
+      {"id": "enumerated", "required": 1, "evidence": [1], "domain": 9, "dependencies": []},
+      {"id": "proved", "required": 2, "evidence": [2], "domain": 9, "dependencies": [0]}
+    ],
+    "expectedAccepted": false,
+    "expectedEffective": [],
+    "expectedJsError": "Insufficient assurance for proved"
   }
 ]
