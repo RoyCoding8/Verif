@@ -1,0 +1,86 @@
+[
+  {
+    "name": "single-tested",
+    "roots": [0],
+    "claims": [
+      {"id": "tested", "required": 0, "evidence": [0], "domain": null, "dependencies": []}
+    ],
+    "expectedAccepted": true,
+    "expectedEffective": [0],
+    "expectedJsError": null
+  },
+  {
+    "name": "bounded-dependency-chain",
+    "roots": [2],
+    "claims": [
+      {"id": "base", "required": 1, "evidence": [1], "domain": 9, "dependencies": []},
+      {"id": "middle", "required": 1, "evidence": [1], "domain": 9, "dependencies": [0]},
+      {"id": "root", "required": 1, "evidence": [1], "domain": 9, "dependencies": [1]}
+    ],
+    "expectedAccepted": true,
+    "expectedEffective": [1, 1, 1],
+    "expectedJsError": null
+  },
+  {
+    "name": "dependency-caps-parent",
+    "roots": [1],
+    "claims": [
+      {"id": "tested-base", "required": 0, "evidence": [0], "domain": null, "dependencies": []},
+      {"id": "bounded-root", "required": 0, "evidence": [1], "domain": 4, "dependencies": [0]}
+    ],
+    "expectedAccepted": true,
+    "expectedEffective": [0, 0],
+    "expectedJsError": null
+  },
+  {
+    "name": "multiple-positive-results-use-weakest",
+    "roots": [0],
+    "claims": [
+      {"id": "multi", "required": 0, "evidence": [1, 0], "domain": 6, "dependencies": []}
+    ],
+    "expectedAccepted": true,
+    "expectedEffective": [0],
+    "expectedJsError": null
+  },
+  {
+    "name": "bounded-domain-mismatch",
+    "roots": [1],
+    "claims": [
+      {"id": "bounded-child", "required": 0, "evidence": [1], "domain": 9, "dependencies": []},
+      {"id": "bounded-parent", "required": 0, "evidence": [1], "domain": 10, "dependencies": [0]}
+    ],
+    "expectedAccepted": false,
+    "expectedEffective": [],
+    "expectedJsError": "Incompatible finite domains for bounded-parent"
+  },
+  {
+    "name": "insufficient-tested-for-bounded",
+    "roots": [0],
+    "claims": [
+      {"id": "too-weak", "required": 1, "evidence": [0], "domain": null, "dependencies": []}
+    ],
+    "expectedAccepted": false,
+    "expectedEffective": [],
+    "expectedJsError": "Insufficient assurance for too-weak"
+  },
+  {
+    "name": "bounded-cannot-meet-formal",
+    "roots": [0],
+    "claims": [
+      {"id": "formal-required", "required": 2, "evidence": [1], "domain": 15, "dependencies": []}
+    ],
+    "expectedAccepted": false,
+    "expectedEffective": [],
+    "expectedJsError": "Insufficient assurance for formal-required"
+  },
+  {
+    "name": "finite-evidence-needs-domain",
+    "roots": [0],
+    "claims": [
+      {"id": "missing-domain", "required": 0, "evidence": [1], "domain": null, "dependencies": []}
+    ],
+    "expectedAccepted": false,
+    "expectedEffective": [],
+    "expectedJsError": "Finite-domain obligations must list a case for every input in the declared domain"
+  }
+]
