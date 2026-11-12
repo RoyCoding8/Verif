@@ -68,7 +68,7 @@ test("scoped tools read, edit, write, search, and limit named feedback checks", 
     workspace,
     goal: "Update one line",
     scope: { read: ["src"], write: ["src"], forbidden: ["src/private"] },
-    runCheck: async (name) => { checks.push(name); return "observed feedback"; },
+    runCheck: async (name, context) => { checks.push({ name, context }); return "observed feedback"; },
     approvedChecks: ["unit"],
     sdk,
   });
@@ -82,8 +82,28 @@ test("scoped tools read, edit, write, search, and limit named feedback checks", 
   const search = await tool("search").execute("4", { query: "gamma" });
   assert.match(search.content[0].text, /src\/input\.txt:2:gamma/);
   assert.equal((await tool("run_check").execute("5", { name: "unapproved" })).isError, true);
-  assert.equal((await tool("run_check").execute("6", { name: "unit" })).content[0].text, "observed feedback");
-  assert.deepEqual(checks, ["unit"]);
+  const checkSignal = new AbortController().signal;
+  assert.equal((await tool("run_check").execute("6", { name: "unit" }, checkSignal)).content[0].text, "observed feedback");
+  assert.deepEqual(checks, [{ name: "unit", context: { workspace, signal: checkSignal } }]);
+  assert.match(state.prompt, /Approved feedback checks: unit/);
+  assert.match(tool("run_check").description, /unit/);
+});
+
+test("writes a specifically approved nested file without requiring write scope on its parent", async (t) => {
+  const workspace = await fixture(t);
+  await mkdir(path.join(workspace, "src", "nested"), { recursive: true });
+  const { sdk, state } = fakeSdk();
+  await runPiWorker({
+    workspace,
+    goal: "Write the approved file",
+    scope: { read: [], write: ["src/nested/output.txt"], forbidden: [] },
+    sdk,
+  });
+
+  const write = state.options.customTools.find((tool) => tool.name === "write");
+  const result = await write.execute("write", { path: "src/nested/output.txt", content: "approved" });
+  assert.equal(result.isError, undefined);
+  assert.equal(await readFile(path.join(workspace, "src", "nested", "output.txt"), "utf8"), "approved");
 });
 
 test("blocks forbidden, git, traversal, out-of-scope, and symlink paths", async (t) => {
@@ -106,6 +126,35 @@ test("blocks forbidden, git, traversal, out-of-scope, and symlink paths", async 
   for (const pathName of ["../outside/secret.txt", ".git/config", "src/private.txt", "src/linked/secret.txt", "outside/secret.txt"]) {
     assert.equal((await read.execute("read", { path: pathName })).isError, true, pathName);
   }
+});
+
+test("applies Windows path rules to scope and tool paths", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows path rules are platform-specific");
+  const workspace = await fixture(t);
+  for (const invalid of ["src/file.txt:stream", "src/CON.log", "src/NUL", "src/trailing.", "src/trailing "]) {
+    await assert.rejects(runPiWorker({
+      workspace,
+      goal: "Inspect",
+      scope: { read: [invalid], write: [], forbidden: [] },
+      sdk: fakeSdk().sdk,
+    }), /Invalid Windows read scope path component/);
+  }
+  await mkdir(path.join(workspace, "src"));
+  await writeFile(path.join(workspace, "src", "secret.txt"), "secret");
+  const { sdk, state } = fakeSdk();
+  await runPiWorker({
+    workspace,
+    goal: "Read the allowed source",
+    scope: { read: ["SRC"], write: [], forbidden: ["SRC/Secret.txt"] },
+    sdk,
+  });
+  const read = state.options.customTools.find((tool) => tool.name === "read");
+  const search = state.options.customTools.find((tool) => tool.name === "search");
+  for (const invalid of ["src/secret.txt:stream", "src/CON.log", "src/NUL", "src/trailing.", "src/trailing "]) {
+    assert.equal((await read.execute("read", { path: invalid })).isError, true, invalid);
+  }
+  assert.equal((await read.execute("read", { path: "src/secret.txt" })).isError, true);
+  assert.equal((await search.execute("search", { query: "secret" })).content[0].text, "No matches");
 });
 
 test("rejects active-tool mismatches and disposes the session", async (t) => {
