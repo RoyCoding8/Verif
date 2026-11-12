@@ -75,11 +75,38 @@ export class Journal {
         old TEXT NOT NULL,
         next TEXT NOT NULL,
         receipt TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('prepared', 'promoted'))
+        status TEXT NOT NULL CHECK (status IN ('prepared', 'promoted', 'abandoned'))
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS one_prepared_operation_per_ref
-        ON operations(ref) WHERE status = 'prepared';
     `);
+    const schema = this.#db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'operations'").get();
+    if (!schema.sql.includes("'abandoned'")) {
+      this.#db.exec(`
+        BEGIN IMMEDIATE;
+        DROP INDEX IF EXISTS one_prepared_operation_per_ref;
+        ALTER TABLE operations RENAME TO operations_legacy;
+        CREATE TABLE operations (
+          id TEXT PRIMARY KEY,
+          attempt TEXT NOT NULL REFERENCES attempts(id),
+          contract TEXT NOT NULL,
+          policy TEXT NOT NULL,
+          ref TEXT NOT NULL,
+          old TEXT NOT NULL,
+          next TEXT NOT NULL,
+          receipt TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('prepared', 'promoted', 'abandoned'))
+        );
+        INSERT INTO operations SELECT * FROM operations_legacy;
+        DROP TABLE operations_legacy;
+        CREATE UNIQUE INDEX one_prepared_operation_per_ref
+          ON operations(ref) WHERE status = 'prepared';
+        COMMIT;
+      `);
+    } else {
+      this.#db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS one_prepared_operation_per_ref
+          ON operations(ref) WHERE status = 'prepared';
+      `);
+    }
   }
 
   close() {
@@ -174,6 +201,7 @@ export class Journal {
       const row = this.#db.prepare('SELECT * FROM operations WHERE id = ?').get(id);
       if (!row) throw new Error(`unknown operation ${id}`);
       if (row.status === 'promoted') return operationFromRow(row);
+      if (row.status === 'abandoned') throw new Error(`operation ${id} was abandoned`);
 
       const op = operationFromRow(row);
       const current = syncResult(readRef(op.ref), 'readRef');
@@ -197,6 +225,25 @@ export class Journal {
       }
       this.#db.prepare("UPDATE operations SET status = 'promoted' WHERE id = ?").run(id);
       return { ...op, status: 'promoted' };
+    });
+  }
+
+  abandon(id, { readRef }) {
+    id = requireString(id, 'id');
+    if (typeof readRef !== 'function') throw new TypeError('readRef must be a function');
+    return this.#transaction(() => {
+      const row = this.#db.prepare('SELECT * FROM operations WHERE id = ?').get(id);
+      if (!row) throw new Error(`unknown operation ${id}`);
+      if (row.status !== 'prepared') return operationFromRow(row);
+
+      const op = operationFromRow(row);
+      const current = syncResult(readRef(op.ref), 'readRef');
+      if (current === op.next) {
+        this.#db.prepare("UPDATE operations SET status = 'promoted' WHERE id = ?").run(id);
+        return { ...op, status: 'promoted' };
+      }
+      this.#db.prepare("UPDATE operations SET status = 'abandoned' WHERE id = ?").run(id);
+      return { ...op, status: 'abandoned' };
     });
   }
 

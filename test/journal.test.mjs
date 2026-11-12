@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -139,6 +140,92 @@ test('leaves divergent refs blocked for explicit recovery', () => {
     }), /expected commit-a or commit-b/);
     assert.equal(journal.getOperation('op-1').status, 'prepared');
     assert.throws(() => journal.prepare(request({ id: 'op-2' })), /still outstanding/);
+    journal.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('abandons an unapplied operation and releases its ref for later work', () => {
+  const { path, cleanup } = fixture();
+  try {
+    const journal = new Journal(path);
+    start(journal);
+    journal.prepare(request());
+    const abandoned = journal.abandon('op-1', { readRef: () => 'commit-a' });
+    assert.equal(abandoned.status, 'abandoned');
+    assert.deepEqual(journal.abandon('op-1', { readRef: () => assert.fail('terminal retry must not read ref') }), abandoned);
+    assert.throws(() => journal.promote('op-1', {
+      readRef: () => 'commit-a',
+      recheck: () => true,
+      updateRef: () => assert.fail('abandoned operation must not promote'),
+    }), /was abandoned/);
+    assert.equal(journal.prepare(request({ id: 'op-2', next: 'commit-c' })).status, 'prepared');
+    journal.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('abandon reconciles a ref already at next to promoted', () => {
+  const { path, cleanup } = fixture();
+  try {
+    const journal = new Journal(path);
+    start(journal);
+    journal.prepare(request());
+    const promoted = journal.abandon('op-1', { readRef: () => 'commit-b' });
+    assert.equal(promoted.status, 'promoted');
+    assert.deepEqual(journal.abandon('op-1', { readRef: () => assert.fail('terminal retry must not read ref') }), promoted);
+    journal.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('abandons and preserves an operation whose ref moved elsewhere', () => {
+  const { path, cleanup } = fixture();
+  try {
+    const journal = new Journal(path);
+    start(journal);
+    const prepared = journal.prepare(request());
+    const abandoned = journal.abandon('op-1', { readRef: () => 'commit-elsewhere' });
+    assert.equal(abandoned.status, 'abandoned');
+    assert.deepEqual(journal.getOperation('op-1'), abandoned);
+    assert.equal(prepared.id, abandoned.id);
+    journal.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('migrates existing journal records to the abandoned state schema', () => {
+  const { path, cleanup } = fixture();
+  try {
+    const db = new DatabaseSync(path);
+    db.exec(`
+      CREATE TABLE attempts (
+        id TEXT PRIMARY KEY, contract TEXT NOT NULL, policy TEXT NOT NULL,
+        active INTEGER NOT NULL CHECK (active IN (0, 1))
+      );
+      CREATE TABLE operations (
+        id TEXT PRIMARY KEY, attempt TEXT NOT NULL REFERENCES attempts(id),
+        contract TEXT NOT NULL, policy TEXT NOT NULL, ref TEXT NOT NULL,
+        old TEXT NOT NULL, next TEXT NOT NULL, receipt TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('prepared', 'promoted'))
+      );
+      CREATE UNIQUE INDEX one_prepared_operation_per_ref
+        ON operations(ref) WHERE status = 'prepared';
+      INSERT INTO attempts VALUES ('attempt-1', 'contract-a', 'policy-a', 1);
+      INSERT INTO operations VALUES (
+        'op-1', 'attempt-1', 'contract-a', 'policy-a', 'refs/heads/main',
+        'commit-a', 'commit-b', '{"result":"verified"}', 'prepared'
+      );
+    `);
+    db.close();
+
+    const journal = new Journal(path);
+    assert.equal(journal.getOperation('op-1').status, 'prepared');
+    assert.equal(journal.abandon('op-1', { readRef: () => 'commit-a' }).status, 'abandoned');
     journal.close();
   } finally {
     cleanup();
