@@ -57,6 +57,7 @@ test('one outstanding operation per ref blocks later promotions until recovery',
     const journal = new Journal(path);
     start(journal);
     journal.prepare(request());
+    assert.equal(journal.getPending('refs/heads/main').id, 'op-1');
     assert.throws(() => journal.prepare(request({ id: 'op-2', old: 'commit-b', next: 'commit-c' })), /still outstanding/);
 
     let ref = 'commit-a';
@@ -69,6 +70,7 @@ test('one outstanding operation per ref blocks later promotions until recovery',
       },
     });
     assert.equal(promoted.status, 'promoted');
+    assert.equal(journal.getPending('refs/heads/main'), null);
     assert.equal(journal.prepare(request({ id: 'op-2', old: 'commit-b', next: 'commit-c' })).status, 'prepared');
     journal.close();
   } finally {
@@ -154,6 +156,7 @@ test('abandons an unapplied operation and releases its ref for later work', () =
     journal.prepare(request());
     const abandoned = journal.abandon('op-1', { readRef: () => 'commit-a' });
     assert.equal(abandoned.status, 'abandoned');
+    assert.equal(journal.getPending('refs/heads/main'), null);
     assert.deepEqual(journal.abandon('op-1', { readRef: () => assert.fail('terminal retry must not read ref') }), abandoned);
     assert.throws(() => journal.promote('op-1', {
       readRef: () => 'commit-a',

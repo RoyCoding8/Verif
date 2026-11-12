@@ -58,6 +58,8 @@ export class Journal {
   constructor(path) {
     this.#db = new DatabaseSync(requireString(path, 'path'));
     this.#db.exec(`
+      PRAGMA busy_timeout = 5000;
+      PRAGMA foreign_keys = ON;
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       CREATE TABLE IF NOT EXISTS attempts (
@@ -250,6 +252,12 @@ export class Journal {
   getOperation(id) {
     id = requireString(id, 'id');
     const row = this.#db.prepare('SELECT * FROM operations WHERE id = ?').get(id);
+    return row ? operationFromRow(row) : null;
+  }
+
+  getPending(ref) {
+    ref = requireString(ref, 'ref');
+    const row = this.#db.prepare("SELECT * FROM operations WHERE ref = ? AND status = 'prepared'").get(ref);
     return row ? operationFromRow(row) : null;
   }
 }
