@@ -47,14 +47,21 @@ function enforceScope(paths, scope) {
     'Candidate has no changes or changed paths outside approved scope');
 }
 
+function requirePrerequisites(repo, commit, prerequisites) {
+  for (const prerequisite of prerequisites) {
+    if (!repo.contains(commit, prerequisite.commit)) throw new Refusal('Source tree lacks promoted prerequisite ' + prerequisite.id);
+  }
+}
+
 function applyPrepared(journal, repo, id, signal) {
   return journal.promote(id, {
     readRef: ref => repo.readRef(ref),
     updateRef: (ref, next, old) => repo.updateRef(ref, next, old, id),
     recheck: op => {
       signal?.throwIfAborted();
-      const { task, evidence, base, original, candidate, deadline } = op.receipt;
+      const { task, evidence, base, original, candidate, deadline, prerequisites } = op.receipt;
       if (task.contract.policy.ref !== op.ref) throw new Refusal('Promotion ref differs from approved policy');
+      requirePrerequisites(repo, op.old, prerequisites);
       const changedPaths = repo.changedPaths(op.old, op.next);
       const originalPaths = repo.changedPaths(base, original);
       if (digest(changedPaths) !== digest(originalPaths)) throw new Refusal('Integration changed the approved path set');
@@ -108,7 +115,7 @@ export function inspectRun({ repository, journalPath, tasks: inputs, requeue }) 
   }
 }
 
-async function integrate(context, task, claim, attempt, base, original, deadline, signal) {
+async function integrate(context, task, claim, attempt, base, original, deadline, signal, prerequisites) {
   const { repo, repository, runId, journal, oracleRoot, scratch } = context;
   const { contract } = task;
   const { ref } = contract.policy;
@@ -118,6 +125,7 @@ async function integrate(context, task, claim, attempt, base, original, deadline
     signal.throwIfAborted();
     const head = repo.readRef(ref);
     requireThat(head, 'Protected ref does not exist: ' + ref);
+    requirePrerequisites(repo, head, prerequisites);
     const operation = randomUUID();
     const tree = head === base ? repo.tree(original) : repo.integrationTree(head, original);
     const candidate = head === base ? original : repo.promotionCommit({
@@ -128,7 +136,7 @@ async function integrate(context, task, claim, attempt, base, original, deadline
     const evidence = await verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline });
     if (repo.readRef(ref) !== head) continue;
     signal.throwIfAborted();
-    const bundle = { repository, runId, claim, task, evidence, base, original, candidate, deadline };
+    const bundle = { repository, runId, claim, task, evidence, base, original, candidate, deadline, prerequisites };
     const next = repo.promotionCommit({ tree, parent: head, operation, receipt: digest(bundle) });
     journal.prepare({
       id: operation, attempt, contract: task.approval, policy: digest(contract.policy),
@@ -152,7 +160,7 @@ async function integrate(context, task, claim, attempt, base, original, deadline
   throw new Refusal('Protected head kept moving during verification');
 }
 
-async function runTask(context, task, { claim, startedMs }) {
+async function runTask(context, task, { claim, startedMs }, prerequisites) {
   const { repo, runId, journal, worker, signal: cancellation, oracleRoot, scratch, onEvent } = context;
   const { contract } = task;
   const deadline = startedMs + contract.policy.budgetMs;
@@ -168,6 +176,7 @@ async function runTask(context, task, { claim, startedMs }) {
     const observedHead = repo.readRef(contract.policy.ref);
     requireThat(observedHead, 'Protected ref does not exist');
     const base = contract.base === 'head-at-dispatch' ? observedHead : contract.base;
+    requirePrerequisites(repo, base, prerequisites);
     journal.registerAttempt({ id: attempt, contract: task.approval, policy: digest(contract.policy), runId, taskId: contract.id, claim });
     let temporary;
     let checking = false;
@@ -198,7 +207,7 @@ async function runTask(context, task, { claim, startedMs }) {
       });
       signal.throwIfAborted();
       const candidate = repo.capture(workspace, base);
-      return await integrate(context, task, claim, attempt, base, candidate, deadline, signal);
+      return await integrate(context, task, claim, attempt, base, candidate, deadline, signal, prerequisites);
     } catch (error) {
       if (round === repairs || signal.aborted || error instanceof RecoveryRequired || !journal.authority(attempt)?.active) throw error;
       diagnosis = '\nPrevious attempt was refused: ' + error.message;
@@ -260,7 +269,8 @@ export async function runTasks({
           continue;
         }
         const claim = journal.startTask(runId, id);
-        running.set(id, runTask(context, task, claim).catch(error => {
+        const prerequisites = task.contract.dependencies.map(dependency => ({ id: dependency, commit: completed.get(dependency).commit }));
+        running.set(id, runTask(context, task, claim, prerequisites).catch(error => {
           if (error instanceof RecoveryRequired) throw error;
           return { id, status: 'refused', reason: error.message };
         }).then(result => {

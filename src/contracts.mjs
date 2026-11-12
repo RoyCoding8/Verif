@@ -58,6 +58,32 @@ function weakest(levelsToCompare) {
   return levelsToCompare.reduce((a, b) => levels.get(a) <= levels.get(b) ? a : b);
 }
 
+function normalizeDomain(domain) {
+  if (domain == null) return null;
+  requireThat(safePath(domain.module) && text(domain.name) && Array.isArray(domain.axes), 'Invalid finite domain');
+  for (const values of domain.axes) {
+    requireThat(Array.isArray(values) && values.length > 0 &&
+      new Set(values.map(digest)).size === values.length, 'Finite domain axes need unique values');
+  }
+  requireThat(Number.isSafeInteger(domainSize(domain)), 'Finite domain is too large');
+  return { module: domain.module, name: domain.name, axes: domain.axes };
+}
+
+function domainSize(domain) {
+  return domain.axes.reduce((size, values) => size * values.length, 1);
+}
+
+export function assertExhaustiveDomain(domain, cases) {
+  const values = domain.axes.map(axis => new Set(axis.map(digest)));
+  const inputs = new Set();
+  for (const { id, module, name, args } of cases) {
+    requireThat(module === domain.module && name === domain.name && args.length === values.length &&
+      args.every((value, position) => values[position].has(digest(value))), 'Case lies outside the approved finite domain: ' + id);
+    inputs.add(digest(args));
+  }
+  requireThat(cases.length === domainSize(domain) && inputs.size === cases.length, 'Oracle does not enumerate the finite domain');
+}
+
 function assurance(plan, levelOf) {
   const claims = index(plan.claims, 'claim');
   const visiting = new Set();
@@ -74,7 +100,7 @@ function assurance(plan, levelOf) {
       requireThat(dependency && link.statement === dependency.statement, 'Unbound claim dependency for ' + id);
       const effective = visit(link.claim);
       if (effective === 'bounded') {
-        requireThat(claim.domain === dependency.domain, 'Incompatible finite domains for ' + id);
+        requireThat(digest(claim.domain) === digest(dependency.domain), 'Incompatible finite domains for ' + id);
       }
       levelsToCompare.push(effective);
     }
@@ -105,17 +131,17 @@ function normalizeObligation(obligation, claims) {
   requireThat(Array.isArray(cases) && cases.length > 0 && cases.every(text) &&
     new Set(cases).size === cases.length, 'Every obligation needs unique declared case IDs');
   requireThat(expect !== 'FAIL' || cases.includes(witness), 'Expected failure must name a declared case');
-  requireThat(method !== 'finite-domain' || text(specification.domain), 'Finite-domain obligations need a domain');
+  requireThat(method !== 'finite-domain' || (specification.domain && cases.length === domainSize(specification.domain)),
+    'Finite-domain obligations must list a case for every input in the declared domain');
   return { id: obligation.id, claim, subject, expect, witness, method, oracle, outputs, cases, timeoutMs: obligation.timeoutMs };
 }
 
 export function planVerification(intent) {
   const claims = [...index(intent.claims, 'claim').values()].map(claim => {
     requireThat(text(claim.statement) && levels.has(claim.required), 'Invalid claim ' + claim.id);
-    requireThat(claim.domain == null || text(claim.domain), 'Invalid claim domain');
     const dependencies = claim.dependencies ?? [];
     requireThat(Array.isArray(dependencies) && dependencies.every(link => text(link?.claim) && text(link.statement)), 'Invalid claim dependencies');
-    return { id: claim.id, statement: claim.statement, required: claim.required, domain: claim.domain ?? null, dependencies };
+    return { id: claim.id, statement: claim.statement, required: claim.required, domain: normalizeDomain(claim.domain), dependencies };
   });
   const indexedClaims = index(claims, 'claim');
   const obligations = [...index(intent.obligations, 'obligation').values()].map(o => normalizeObligation(o, indexedClaims));
@@ -130,6 +156,15 @@ export function planVerification(intent) {
     requireThat(direct.length > 0, 'Claim lacks a positive candidate obligation: ' + claim.id);
     return weakest(direct.map(o => methods.get(o.method)));
   });
+  const covered = new Set();
+  const pending = criteria.flatMap(criterion => criterion.claims);
+  while (pending.length) {
+    const id = pending.pop();
+    if (covered.has(id)) continue;
+    covered.add(id);
+    pending.push(...indexedClaims.get(id).dependencies.map(link => link.claim));
+  }
+  requireThat(covered.size === claims.length, 'Every claim must support an acceptance criterion');
   return plan;
 }
 

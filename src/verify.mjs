@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { lstat, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { compose, digest, evidenceKeys, hash, requireThat, safePath, text, within } from './contracts.mjs';
+import { assertExhaustiveDomain, compose, digest, evidenceKeys, hash, requireThat, safePath, text, within } from './contracts.mjs';
 
 const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
@@ -69,6 +69,7 @@ async function runObligation({ repo, obligation, claim, commit, oracleRoot, scra
         text(name) && Array.isArray(args) && expected !== undefined, 'Invalid oracle case ' + id);
       return { id, module, name, args };
     });
+    if (obligation.method === 'finite-domain') assertExhaustiveDomain(claim.domain, inputs);
     await writeFile(evaluatorFile, evaluator, { flag: 'wx' });
     await writeFile(request, JSON.stringify(inputs), { flag: 'wx' });
     const timeout = Math.min(obligation.timeoutMs, deadline - Date.now());

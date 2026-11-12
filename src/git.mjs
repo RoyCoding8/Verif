@@ -205,6 +205,18 @@ export class GitRepo {
     return [...new Set(paths)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   }
 
+  contains(commit, ancestor) {
+    ensureCommit(this.#root, commit);
+    ensureCommit(this.#root, ancestor);
+    try {
+      run(this.#root, ['merge-base', '--is-ancestor', ancestor, commit]);
+      return true;
+    } catch (error) {
+      if (error.status === 1) return false;
+      throw error;
+    }
+  }
+
   tree(commit) {
     ensureCommit(this.#root, commit);
     return run(this.#root, ['rev-parse', `${commit}^{tree}`]).trim();

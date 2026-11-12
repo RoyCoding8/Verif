@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { approve, createDemo, fixtureWorker } from '../examples/setup.mjs';
-import { planVerification } from '../src/contracts.mjs';
+import { assertExhaustiveDomain, planVerification } from '../src/contracts.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { Journal } from '../src/journal.mjs';
 import { proposeTask } from '../src/planner.mjs';
@@ -95,12 +95,37 @@ test('out-of-scope edit and failed oracle do not advance the protected ref', asy
 test('verification rejects a non-discriminating baseline and an infeasible assurance plan', async t => {
   const settings = await fixture(t);
   const task = structuredClone(settings.tasks[0]);
+  const partial = structuredClone(task);
+  partial.obligations[1].cases.pop();
+  assert.throws(() => planVerification(partial), /case for every input/);
   task.obligations[0].witness = '1/1';
   const [result] = await runTasks({ ...settings, tasks: [approve(task)], worker: fixtureWorker });
   assert.equal(result.status, 'refused');
   assert.match(result.reason, /Wrong failure witness/);
   task.claims[0].required = 'formal';
   assert.throws(() => planVerification(task), /Insufficient assurance/);
+});
+
+test('rejects a finite oracle that repeats a tuple under different case IDs', () => {
+  const domain = { module: 'program.mjs', name: 'value', axes: [[1, 2]] };
+  const cases = [1, 1].map((value, index) => ({ id: String(index), module: domain.module, name: domain.name, args: [value] }));
+  assert.throws(() => assertExhaustiveDomain(domain, cases), /does not enumerate/);
+});
+
+test('refuses a dependent task whose pinned base omits the prerequisite commit', async t => {
+  const settings = await fixture(t);
+  const repo = new GitRepo(settings.repository);
+  const [messages, api] = settings.tasks.slice(1);
+  const child = approve({ ...api, base: repo.readRef(api.policy.ref), dependencies: ['messages'] });
+  const results = await runTasks({
+    ...settings, tasks: [messages, child],
+    worker: async job => {
+      assert.deepEqual(job.scope.write, ['response.mjs']);
+      await fixtureWorker(job);
+    },
+  });
+  assert.deepEqual(results.map(result => result.status), ['promoted', 'refused'], JSON.stringify(results));
+  assert.match(results[1].reason, /lacks promoted prerequisite messages/);
 });
 
 test('planner binds approved oracle bytes without granting task approval', async t => {

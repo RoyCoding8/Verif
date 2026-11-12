@@ -18,7 +18,8 @@ async function catalogFor(root, files) {
     const bytes = await readFile(path);
     const records = JSON.parse(bytes.toString('utf8'));
     requireThat(Array.isArray(records) && records.length > 0 && records.every(record => text(record?.id)), 'Missing oracle cases');
-    return [file, { file, digest: hash(bytes), cases: records.map(record => record.id) }];
+    const inputs = records.map(({ id, module, name, args }) => ({ id, module, name, args }));
+    return [file, { file, digest: hash(bytes), cases: records.map(record => record.id), inputs }];
   })));
 }
 
@@ -44,10 +45,10 @@ export async function proposeTask({ repository, oracleRoot, scratch, draft, work
       'Do not edit implementation files. Proposed claims need meaningful coverage and an approved oracle.',
       'Return an object with criteria [{id,description,claims:[claimId]}], claims [{id,statement,required,domain?,dependencies?:[{claim,statement}]}],',
       'and obligations [{id,claim,subject,expect,witness?,method?,oracleFile,outputs?,timeoutMs}].',
-      'Use node-test for tested claims or finite-domain for a declared exhaustive enumeration. The subject can be candidate or base.',
+      'Use node-test for sampled claims or finite-domain for a complete Cartesian product. For a finite domain, supply domain: {module,name,axes:[allowedValuesForArg1,allowedValuesForArg2,...]}. The subject can be candidate or base.',
       'The plan needs a positive candidate obligation for each claim. A FAIL obligation must name its expected failing case ID.',
       'Supported optional output: cases.json. Budget in milliseconds: ' + draft.policy.budgetMs + '.',
-      'Approved oracle choices and case IDs: ' + JSON.stringify([...catalog.values()].map(({ file, cases }) => ({ file, cases }))),
+      'Approved oracle choices and inputs: ' + JSON.stringify([...catalog.values()].map(({ file, inputs }) => ({ file, inputs }))),
       'Goal: ' + draft.goal,
     ];
     await worker({

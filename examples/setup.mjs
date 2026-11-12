@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { digest, hash, makeContract, planVerification } from '../src/contracts.mjs';
 
-const domain = 'stock=0..2; quantity=-1..3';
+const domain = { module: 'reserve.mjs', name: 'reserve', axes: [[0, 1, 2], [-1, 0, 1, 2, 3]] };
 const arithmetic = 'Reservation arithmetic preserves stock for rejected quantities and subtracts valid quantities';
 const cases = [0, 1, 2].flatMap(stock => [-1, 0, 1, 2, 3].map(quantity => stock + '/' + quantity));
 const patches = {
