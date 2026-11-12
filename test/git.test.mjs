@@ -58,10 +58,12 @@ test('reports sorted paths and materializes exact blob bytes and executable mode
   const root = repo('materialize');
   fs.mkdirSync(path.join(root, 'nested'));
   fs.writeFileSync(path.join(root, 'nested', 'run.sh'), Buffer.from([0, 255, 10]));
+  fs.chmodSync(path.join(root, 'nested', 'run.sh'), 0o755);
   fs.writeFileSync(path.join(root, 'z.txt'), 'z');
   git(root, 'add', '-A');
   git(root, 'update-index', '--chmod=+x', 'nested/run.sh');
   const base = commit(root, 'base');
+  assert.match(git(root, 'ls-tree', base, '--', 'nested/run.sh'), /^100755 blob /);
   fs.writeFileSync(path.join(root, 'z.txt'), 'updated');
   fs.writeFileSync(path.join(root, 'a.txt'), 'new');
   const candidate = commit(root, 'candidate');
@@ -84,9 +86,11 @@ test('forks without a remote, captures changed workspace bytes, and creates a pr
   fs.writeFileSync(path.join(root, 'tracked.txt'), 'base\n');
   fs.mkdirSync(path.join(root, 'tools'));
   fs.writeFileSync(path.join(root, 'tools', 'run.sh'), 'base script\n');
+  fs.chmodSync(path.join(root, 'tools', 'run.sh'), 0o755);
   git(root, 'add', '-A');
   git(root, 'update-index', '--chmod=+x', 'tools/run.sh');
   const base = commit(root, 'base');
+  assert.match(git(root, 'ls-tree', base, '--', 'tools/run.sh'), /^100755 blob /);
   const adapter = new GitRepo(root);
   const candidatePath = path.join(tmp, 'candidate');
   const candidate = adapter.fork(base, candidatePath);
