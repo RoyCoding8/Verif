@@ -113,6 +113,14 @@ function entries(repo, commit) {
   return result.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }
 
+function describeFiles(repo, list, write) {
+  return list.map(({ path: file, mode, oid: blob }) => {
+    const bytes = run(repo, ['cat-file', 'blob', blob], undefined, {}, true);
+    write?.(file, mode, bytes);
+    return { path: file, mode, digest: crypto.createHash('sha256').update(bytes).digest('hex') };
+  });
+}
+
 function safeDestination(destination) {
   const abs = path.resolve(destination);
   if (abs === path.parse(abs).root) throw new Error('Destination cannot be a filesystem root');
@@ -177,12 +185,16 @@ export class GitRepo {
     }
   }
 
-  updateRef(ref, next, old) {
+  updateRef(ref, next, old, operation) {
     refName(ref);
     assertDirectRef(this.#root, ref);
     oid(next, 'new object id');
     const expected = old === null ? '0'.repeat(this.#objectFormat === 'sha1' ? 40 : 64) : oid(old, 'expected object id');
-    run(this.#root, ['update-ref', '--no-deref', ref, next, expected]);
+    const reason = operation === undefined ? [] : ['--create-reflog', '-m', `verity promote ${operation}`];
+    if (operation !== undefined && (typeof operation !== 'string' || !operation.trim() || /[\r\n\0]/.test(operation))) {
+      throw new Error('Invalid promotion operation ID');
+    }
+    run(this.#root, ['update-ref', '--no-deref', ...reason, ref, next, expected]);
   }
 
   changedPaths(base, candidate) {
@@ -205,6 +217,10 @@ export class GitRepo {
     return oid(output.split(/\s+/)[0], 'integration tree id');
   }
 
+  manifest(commit) {
+    return { tree: this.tree(commit), files: describeFiles(this.#root, entries(this.#root, commit)) };
+  }
+
   materialize(commit, destination) {
     const list = entries(this.#root, commit);
     const paths = list.map((entry) => entry.path);
@@ -213,23 +229,19 @@ export class GitRepo {
     const target = safeDestination(destination);
     const temp = fs.mkdtempSync(path.join(target.parentReal, '.verity-materialize-'));
     try {
-      for (const entry of list) {
-        const file = path.join(temp, ...entry.path.split('/'));
+      const files = describeFiles(this.#root, list, (name, mode, bytes) => {
+        const file = path.join(temp, ...name.split('/'));
         fs.mkdirSync(path.dirname(file), { recursive: true });
-        const bytes = run(this.#root, ['cat-file', 'blob', entry.oid], undefined, {}, true);
-        entry.digest = crypto.createHash('sha256').update(bytes).digest('hex');
-        fs.writeFileSync(file, bytes, { mode: entry.mode === '100755' ? 0o755 : 0o644, flag: 'wx' });
-      }
+        fs.writeFileSync(file, bytes, { mode: mode === '100755' ? 0o755 : 0o644, flag: 'wx' });
+      });
+      const tree = this.tree(commit);
       if (fs.existsSync(target.abs)) fs.rmdirSync(target.abs);
       fs.renameSync(temp, target.abs);
+      return { tree, files };
     } catch (error) {
       fs.rmSync(temp, { recursive: true, force: true });
       throw error;
     }
-    return {
-      tree: this.tree(commit),
-      files: list.map(({ path: file, mode, digest }) => ({ path: file, mode, digest })),
-    };
   }
 
   promotionCommit({ tree, parent, operation, receipt }) {

@@ -22,7 +22,9 @@ The manifest contains `repository`, `oracles`, `journal`, `scratch`, `maxWorkers
 3. Run `node src/cli.mjs run manifest.json`.
 4. Use `node src/cli.mjs receipt manifest.json <operation>` to inspect the recorded evidence.
 
-Use `cancel` with an attempt ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit.
+To ask Pi for a plan, list the available oracle files in each task's `oracleFiles` and run `node src/cli.mjs propose manifest.json`. Review the returned intent before approving it.
+
+Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it.
 
 ## Evidence and operating scope
 

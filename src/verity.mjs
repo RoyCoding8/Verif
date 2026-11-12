@@ -1,13 +1,27 @@
 import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { approvedTask, digest, requireThat, within } from './contracts.mjs';
 import { GitRepo } from './git.mjs';
 import { Journal } from './journal.mjs';
 import { runPiWorker } from './pi-worker.mjs';
-import { decide, subjectFor, verify } from './verify.mjs';
+import { checkFeedback, decide, subjectFor, verify } from './verify.mjs';
 
 class Refusal extends Error {}
+class RecoveryRequired extends Error {}
+
+function runIdentity(repository, tasks) {
+  const approvals = tasks.map(task => [task.contract.id, task.approval]).sort(([left], [right]) => left.localeCompare(right));
+  return digest({ repository, approvals });
+}
+
+function promotionResult(op) {
+  return {
+    id: op.receipt.task.contract.id, status: 'promoted', attempt: op.attempt,
+    operation: op.id, commit: op.next, assurance: op.receipt.evidence.assurance,
+  };
+}
 
 function validateGraph(tasks) {
   const remaining = new Map();
@@ -36,7 +50,7 @@ function enforceScope(paths, scope) {
 function applyPrepared(journal, repo, id, signal) {
   return journal.promote(id, {
     readRef: ref => repo.readRef(ref),
-    updateRef: (ref, next, old) => repo.updateRef(ref, next, old),
+    updateRef: (ref, next, old) => repo.updateRef(ref, next, old, id),
     recheck: op => {
       signal?.throwIfAborted();
       const { task, evidence, base, original, candidate, deadline } = op.receipt;
@@ -46,10 +60,10 @@ function applyPrepared(journal, repo, id, signal) {
       if (digest(changedPaths) !== digest(originalPaths)) throw new Refusal('Integration changed the approved path set');
       if (repo.tree(candidate) !== repo.tree(op.next)) throw new Refusal('Promotion tree differs from the checked tree');
       const subjects = new Set(task.plan.obligations.map(o => subjectFor(o, base, candidate)));
-      const trees = new Map([...subjects].map(subject => [subject, repo.tree(subject)]));
+      const manifests = new Map([...subjects].map(subject => [subject, repo.manifest(subject === candidate ? op.next : subject)]));
       const decision = decide({
         task, receipt: evidence, authority: journal.authority(op.attempt), base, candidate,
-        trees, changedPaths, now: Date.now(), deadline,
+        manifests, changedPaths, now: Date.now(), deadline,
       });
       if (!decision.promote) throw new Refusal(decision.reason);
       return true;
@@ -58,18 +72,44 @@ function applyPrepared(journal, repo, id, signal) {
 }
 
 export function recoverOperation({ repository, journalPath, operation, abandon = false }) {
-  const repo = new GitRepo(resolve(repository));
+  const identity = realpathSync(resolve(repository));
+  const repo = new GitRepo(identity);
   const journal = new Journal(resolve(journalPath));
   try {
-    if (abandon) return journal.abandon(operation, { readRef: ref => repo.readRef(ref) });
-    return applyPrepared(journal, repo, operation);
+    const prepared = journal.getOperation(operation);
+    requireThat(prepared?.receipt.repository === identity, 'Operation does not belong to this repository');
+    const op = abandon ? journal.abandon(operation, { readRef: ref => repo.readRef(ref) }) : applyPrepared(journal, repo, operation);
+    if (op.status === 'promoted') {
+      journal.finishTask(op.receipt.runId, op.receipt.task.contract.id, promotionResult(op), op.receipt.claim);
+    }
+    return op;
   } finally {
     journal.close();
   }
 }
 
-async function integrate(context, task, attempt, base, original, deadline, signal) {
-  const { repo, journal, oracleRoot, scratch } = context;
+export function inspectRun({ repository, journalPath, tasks: inputs, requeue }) {
+  const identity = realpathSync(resolve(repository));
+  const tasks = inputs.map(approvedTask);
+  const runId = runIdentity(identity, tasks);
+  const journal = new Journal(resolve(journalPath));
+  try {
+    if (requeue) {
+      const task = tasks.find(task => task.contract.id === requeue);
+      requireThat(task, 'Unknown task ' + requeue);
+      requireThat(!journal.getTaskPromotion(runId, requeue), 'Task already promoted. Run again to reconcile its status.');
+      const pending = journal.getPending(task.contract.policy.ref);
+      requireThat(!pending, 'Recover prepared operation ' + pending?.id + ' before requeueing');
+      journal.requeueTask(runId, requeue);
+    }
+    return { runId, tasks: journal.runTasks(runId) };
+  } finally {
+    journal.close();
+  }
+}
+
+async function integrate(context, task, claim, attempt, base, original, deadline, signal) {
+  const { repo, repository, runId, journal, oracleRoot, scratch } = context;
   const { contract } = task;
   const { ref } = contract.policy;
   const originalPaths = repo.changedPaths(base, original);
@@ -88,18 +128,17 @@ async function integrate(context, task, attempt, base, original, deadline, signa
     const evidence = await verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline });
     if (repo.readRef(ref) !== head) continue;
     signal.throwIfAborted();
-    const bundle = { task, evidence, base, original, candidate, deadline };
+    const bundle = { repository, runId, claim, task, evidence, base, original, candidate, deadline };
     const next = repo.promotionCommit({ tree, parent: head, operation, receipt: digest(bundle) });
     journal.prepare({
       id: operation, attempt, contract: task.approval, policy: digest(contract.policy),
       ref, old: head, next, receipt: bundle,
     });
     try {
-      applyPrepared(journal, repo, operation, signal);
-      return { id: contract.id, status: 'promoted', attempt, operation, commit: next, assurance: evidence.assurance };
+      return promotionResult(applyPrepared(journal, repo, operation, signal));
     } catch (error) {
       const current = repo.readRef(ref);
-      if (current === next) throw new Error('Promotion requires recovery for operation ' + operation, { cause: error });
+      if (current === next) throw new RecoveryRequired('Promotion requires recovery for operation ' + operation, { cause: error });
       const authority = journal.authority(attempt);
       if (current !== head || signal.aborted || error instanceof Refusal ||
         !authority?.active || authority.policy !== digest(contract.policy)) {
@@ -107,17 +146,19 @@ async function integrate(context, task, attempt, base, original, deadline, signa
         if (current !== head && !signal.aborted) continue;
         throw error;
       }
-      throw new Error('Prepared operation requires recovery: ' + operation, { cause: error });
+      throw new RecoveryRequired('Prepared operation requires recovery: ' + operation, { cause: error });
     }
   }
   throw new Refusal('Protected head kept moving during verification');
 }
 
-async function runTask(context, task) {
-  const { repo, journal, worker, signal: cancellation, oracleRoot, scratch } = context;
+async function runTask(context, task, { claim, startedMs }) {
+  const { repo, runId, journal, worker, signal: cancellation, oracleRoot, scratch, onEvent } = context;
   const { contract } = task;
-  const deadline = Date.now() + contract.policy.budgetMs;
-  const timer = AbortSignal.timeout(Math.min(contract.policy.budgetMs, 2 ** 32 - 1));
+  const deadline = startedMs + contract.policy.budgetMs;
+  const remaining = deadline - Date.now();
+  requireThat(remaining > 0, 'Task budget expired');
+  const timer = AbortSignal.timeout(remaining);
   const signal = cancellation ? AbortSignal.any([timer, cancellation]) : timer;
   const repairs = contract.policy.maxRepairs ?? 0;
   let diagnosis = '';
@@ -127,23 +168,27 @@ async function runTask(context, task) {
     const observedHead = repo.readRef(contract.policy.ref);
     requireThat(observedHead, 'Protected ref does not exist');
     const base = contract.base === 'head-at-dispatch' ? observedHead : contract.base;
-    journal.registerAttempt({ id: attempt, contract: task.approval, policy: digest(contract.policy) });
-    const temporary = await mkdtemp(join(scratch, 'attempt-'));
-    const workspace = join(temporary, 'worker');
+    journal.registerAttempt({ id: attempt, contract: task.approval, policy: digest(contract.policy), runId, taskId: contract.id, claim });
+    let temporary;
     let checking = false;
     try {
+      onEvent?.({ type: 'attempt_started', runId, task: contract.id, attempt });
+      temporary = await mkdtemp(join(scratch, 'attempt-'));
+      const workspace = join(temporary, 'worker');
       repo.fork(base, workspace);
       await worker({
         workspace, goal: contract.goal + diagnosis, scope: contract.scope, signal,
         approvedChecks: task.plan.obligations.map(obligation => obligation.id),
-        runCheck: async name => {
+        runCheck: async (name, options) => {
           requireThat(!checking, 'A feedback check is already running');
           requireThat(task.plan.obligations.some(o => o.id === name), 'Unknown approved check ' + name);
           checking = true;
           try {
             const snapshot = repo.capture(workspace, base);
-            const receipt = await verify({ repo, task, base, candidate: snapshot, oracleRoot, scratch, signal, deadline });
-            return receipt.results.find(o => o.id === name).status;
+            const checkSignal = options?.signal ? AbortSignal.any([signal, options.signal]) : signal;
+            return await checkFeedback({
+              repo, task, name, base, candidate: snapshot, oracleRoot, scratch, signal: checkSignal, deadline,
+            });
           } catch (error) {
             return 'Feedback failed: ' + error.message;
           } finally {
@@ -153,32 +198,35 @@ async function runTask(context, task) {
       });
       signal.throwIfAborted();
       const candidate = repo.capture(workspace, base);
-      return await integrate(context, task, attempt, base, candidate, deadline, signal);
+      return await integrate(context, task, claim, attempt, base, candidate, deadline, signal);
     } catch (error) {
-      if (round === repairs || signal.aborted || error.message.includes('requires recovery')) throw error;
+      if (round === repairs || signal.aborted || error instanceof RecoveryRequired || !journal.authority(attempt)?.active) throw error;
       diagnosis = '\nPrevious attempt was refused: ' + error.message;
     } finally {
       journal.invalidate(attempt);
-      await rm(temporary, { recursive: true, force: true });
+      if (temporary) await rm(temporary, { recursive: true, force: true });
     }
   }
 }
 
 export async function runTasks({
-  repository, journalPath, oracleRoot, scratch, tasks: inputs, maxWorkers = 2, worker = runPiWorker, signal,
+  repository, journalPath, oracleRoot, scratch, tasks: inputs, maxWorkers = 2, worker = runPiWorker, signal, onEvent,
 }) {
   requireThat(Array.isArray(inputs) && inputs.length > 0, 'No tasks supplied');
   requireThat(Number.isSafeInteger(maxWorkers) && maxWorkers > 0 && maxWorkers <= 32, 'Invalid worker limit');
   const tasks = inputs.map(approvedTask);
   validateGraph(tasks);
-  const repo = new GitRepo(resolve(repository));
+  repository = realpathSync(resolve(repository));
+  const repo = new GitRepo(repository);
+  const runId = runIdentity(repository, tasks);
   scratch = resolve(scratch);
   await mkdir(scratch, { recursive: true });
   const database = resolve(journalPath);
-  await mkdir(resolve(database, '..'), { recursive: true });
+  await mkdir(dirname(database), { recursive: true });
   const journal = new Journal(database);
-  const context = { repo, journal, oracleRoot: resolve(oracleRoot), scratch, worker, signal };
-  const pending = new Map(tasks.map(task => [task.contract.id, task]));
+  const context = { repo, repository, runId, journal, oracleRoot: resolve(oracleRoot), scratch, worker, signal, onEvent };
+  const byId = new Map(tasks.map(task => [task.contract.id, task]));
+  const pending = new Map();
   const running = new Map();
   const completed = new Map();
   try {
@@ -186,16 +234,39 @@ export async function runTasks({
       const operation = journal.getPending(ref);
       requireThat(!operation, 'Recover prepared operation ' + operation?.id + ' before running tasks for ' + ref);
     }
+    journal.registerRun(runId, tasks.map(task => ({ id: task.contract.id, approval: task.approval })));
+    for (const record of journal.runTasks(runId)) {
+      if (record.status === 'running') {
+        const op = journal.getTaskPromotion(runId, record.id);
+        requireThat(op, 'Task ' + record.id + ' is already running. Requeue it if its controller has stopped.');
+        const result = promotionResult(op);
+        journal.finishTask(runId, record.id, result, record.claim);
+        completed.set(record.id, result);
+      } else if (record.status === 'queued') {
+        pending.set(record.id, byId.get(record.id));
+      } else {
+        completed.set(record.id, record.result);
+      }
+    }
     while (pending.size || running.size) {
       for (const [id, task] of pending) {
         if (running.size === maxWorkers) break;
         if (!task.contract.dependencies.every(dependency => completed.has(dependency))) continue;
         pending.delete(id);
         if (task.contract.dependencies.some(dependency => completed.get(dependency).status !== 'promoted')) {
-          completed.set(id, { id, status: 'blocked', reason: 'Prerequisite was not promoted' });
+          const result = { id, status: 'blocked', reason: 'Prerequisite was not promoted' };
+          journal.finishTask(runId, id, result);
+          completed.set(id, result);
           continue;
         }
-        running.set(id, runTask(context, task).catch(error => ({ id, status: 'refused', reason: error.message })));
+        const claim = journal.startTask(runId, id);
+        running.set(id, runTask(context, task, claim).catch(error => {
+          if (error instanceof RecoveryRequired) throw error;
+          return { id, status: 'refused', reason: error.message };
+        }).then(result => {
+          journal.finishTask(runId, id, result, claim.claim);
+          return result;
+        }));
       }
       if (running.size) {
         const result = await Promise.race(running.values());

@@ -118,7 +118,16 @@ export async function verify({ repo, task, base, candidate, oracleRoot, scratch,
   return { version: 1, contract: task.approval, plan: task.contract.plan, base, candidate, environment, results, assurance };
 }
 
-export function decide({ task, receipt, authority, base, candidate, trees, changedPaths, now, deadline }) {
+export async function checkFeedback({ repo, task, name, base, candidate, oracleRoot, scratch, signal, deadline }) {
+  const obligation = task.plan.obligations.find(item => item.id === name);
+  requireThat(obligation, 'Unknown approved check ' + name);
+  const claim = task.plan.claims.find(item => item.id === obligation.claim);
+  const commit = subjectFor(obligation, base, candidate);
+  const { status, witness } = await runObligation({ repo, obligation, claim, commit, oracleRoot, scratch, signal, deadline });
+  return witness ? status + ' (' + witness + ')' : status;
+}
+
+export function decide({ task, receipt, authority, base, candidate, manifests, changedPaths, now, deadline }) {
   try {
     const { contract, plan, approval } = task;
     requireThat(authority?.active && authority.contract === approval && authority.policy === digest(contract.policy), 'Inactive or stale authority');
@@ -134,8 +143,9 @@ export function decide({ task, receipt, authority, base, candidate, trees, chang
       const result = receipt.results.find(result => result.id === obligation.id);
       const claim = plan.claims.find(claim => claim.id === obligation.claim);
       const subject = subjectFor(obligation, base, candidate);
-      requireThat(result.commit === subject && result.manifest.tree === trees.get(subject) &&
-        digest(result.keys) === digest(evidenceKeys(obligation, claim, subject, result.manifest, environment)),
+      const manifest = manifests.get(subject);
+      requireThat(result.commit === subject && digest(result.manifest) === digest(manifest) &&
+        digest(result.keys) === digest(evidenceKeys(obligation, claim, subject, manifest, environment)),
       'Stale evidence for ' + obligation.id);
       const report = readReport(JSON.stringify({ cases: result.cases }), obligation);
       requireThat(report.status === result.status && report.witness === result.witness, 'Receipt verdict mismatch');

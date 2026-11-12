@@ -36,6 +36,11 @@ export function safePath(value) {
 }
 
 export function within(path, rules) {
+  if (process.platform === 'win32') return rules.some(rule => {
+    const folded = path.toLowerCase();
+    const prefix = rule.toLowerCase();
+    return folded === prefix || folded.startsWith(prefix + '/');
+  });
   return rules.some(rule => path === rule || path.startsWith(rule + '/'));
 }
 
@@ -99,6 +104,7 @@ function normalizeObligation(obligation, claims) {
   const cases = obligation.cases;
   requireThat(Array.isArray(cases) && cases.length > 0 && cases.every(text) &&
     new Set(cases).size === cases.length, 'Every obligation needs unique declared case IDs');
+  requireThat(expect !== 'FAIL' || cases.includes(witness), 'Expected failure must name a declared case');
   requireThat(method !== 'finite-domain' || text(specification.domain), 'Finite-domain obligations need a domain');
   return { id: obligation.id, claim, subject, expect, witness, method, oracle, outputs, cases, timeoutMs: obligation.timeoutMs };
 }
@@ -134,7 +140,7 @@ export function makeContract(input, plan) {
     new Set(dependencies).size === dependencies.length, 'Invalid task dependencies');
   requireThat(base === 'head-at-dispatch' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(base), 'Invalid task base');
   requireThat(typeof policy?.ref === 'string' && policy.ref.startsWith('refs/heads/'), 'Invalid protected branch');
-  requireThat(Number.isSafeInteger(policy.budgetMs) && policy.budgetMs > 0, 'Invalid task budget');
+  requireThat(Number.isSafeInteger(policy.budgetMs) && policy.budgetMs > 0 && policy.budgetMs <= 2_147_483_647, 'Invalid task budget');
   requireThat(Number.isSafeInteger(policy.maxRepairs ?? 0) && (policy.maxRepairs ?? 0) >= 0, 'Invalid repair limit');
   requireThat(plan.obligations.reduce((sum, o) => sum + o.timeoutMs, 0) < policy.budgetMs, 'Verification exceeds task budget');
   requireThat(scope && ['read', 'write', 'forbidden'].every(key => Array.isArray(scope[key]) && scope[key].every(safePath)),
