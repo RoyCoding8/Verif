@@ -44,11 +44,24 @@ function leanClaim(binding) {
   return { source, definitionDigest, domain, precondition, guarantee, implementation, obligation, assumptions: [...binding.assumptions].sort() };
 }
 
+export function normalizeLeanModules(modules = []) {
+  requireThat(Array.isArray(modules) && modules.length <= 16, 'Lean accepts at most 16 approved local modules');
+  const names = new Set();
+  return [...modules].map(module => {
+    const { name, source } = module ?? {};
+    requireThat(typeof name === 'string' && /^Verity[A-Za-z0-9_]+$/.test(name) && name.length <= 80 &&
+      !names.has(name.toLowerCase()) && text(source) && source.isWellFormed() &&
+      Buffer.byteLength(source, 'utf8') <= 2 * 1024 * 1024, 'Invalid or duplicate approved Lean module');
+    names.add(name.toLowerCase());
+    return { name, source };
+  }).sort((first, second) => first.name < second.name ? -1 : Number(first.name > second.name));
+}
+
 export function parseLeanOracle(oracle) {
   requireThat(leanName(oracle?.theorem) && safePath(oracle.solution) && oracle.solution.endsWith('.lean') &&
     text(oracle.challenge) && oracle.challenge.isWellFormed(), 'Lean oracle needs a theorem name, solution path, and challenge source');
   const { theorem, solution, challenge } = oracle;
-  return { theorem, solution, challenge };
+  return { theorem, solution, challenge, ...(Object.hasOwn(oracle, 'modules') ? { modules: normalizeLeanModules(oracle.modules) } : {}) };
 }
 
 export function safePath(value) {
