@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import { pipeline } from 'node:stream/promises';
+import { normalizeLeanModules } from './contracts.mjs';
 
 const execute = promisify(execFile);
 const leanVersion = '4.35.0';
@@ -17,24 +18,18 @@ const manifest = name => JSON.stringify({
   name,
   lakeDir: '.lake',
 }, null, 2) + '\n';
-const challengeLakefile = [
-  'name = "verity_lean_challenge"',
-  'version = "0.1.0"',
-  'defaultTargets = ["Challenge"]',
-  '',
-  '[[lean_lib]]',
-  'name = "Challenge"',
-  '',
-].join('\n');
-const solutionLakefile = [
-  'name = "verity_lean_solution"',
-  'version = "0.1.0"',
-  'defaultTargets = ["Solution"]',
-  '',
-  '[[lean_lib]]',
-  'name = "Solution"',
-  '',
-].join('\n');
+function lakefileText(packageName, target, modules) {
+  return [
+    `name = "${packageName}"`,
+    'version = "0.1.0"',
+    `defaultTargets = ["${target}"]`,
+    '',
+    '[[lean_lib]]',
+    `name = "${target}"`,
+    ...modules.flatMap(({ name }) => ['', '[[lean_lib]]', `name = "${name}"`]),
+    '',
+  ].join('\n');
+}
 
 export const leanEnvironment = Object.freeze({
   adapter: 'verity-lean-judge/1',
@@ -53,9 +48,10 @@ function sourceText(value, name) {
   }
 }
 
-function checkRequest({ challenge, solution, theorem, theorems, timeoutMs, signal, scratch }) {
+function checkRequest({ challenge, solution, theorem, theorems, modules = [], timeoutMs, signal, scratch }) {
   sourceText(challenge, 'challenge');
   sourceText(solution, 'solution');
+  const approvedModules = normalizeLeanModules(modules);
   if ((theorem === undefined) === (theorems === undefined)) {
     throw new TypeError('provide exactly one of theorem or theorems');
   }
@@ -76,7 +72,7 @@ function checkRequest({ challenge, solution, theorem, theorems, timeoutMs, signa
     throw new TypeError('signal must be an AbortSignal');
   }
   signal?.throwIfAborted();
-  return theoremNames;
+  return { theoremNames, approvedModules };
 }
 
 function commandEnvironment() {
@@ -167,14 +163,16 @@ async function exportChallenge(cwd, outputFile, env, deadline, signal) {
   if ((await stat(outputFile)).size === 0) throw new Error('Lean judge produced an empty trusted challenge export');
 }
 
-async function prepareProject(directory, name, sourceFile, sourceTextValue, lakefileText) {
+async function prepareProject(directory, name, sourceFile, sourceTextValue, lakefile, modules) {
   await mkdir(directory, { recursive: true });
   await Promise.all([
     writeFile(join(directory, 'lean-toolchain'), leanEnvironment.toolchain + '\n', { flag: 'wx' }),
-    writeFile(join(directory, 'lakefile.toml'), lakefileText, { flag: 'wx' }),
+    writeFile(join(directory, 'lakefile.toml'), lakefile, { flag: 'wx' }),
     writeFile(join(directory, 'lake-manifest.json'), manifest(name), { flag: 'wx' }),
     writeFile(join(directory, sourceFile), sourceTextValue, { flag: 'wx' }),
   ]);
+  await Promise.all(modules.map(({ name: moduleName, source }) =>
+    writeFile(join(directory, moduleName + '.lean'), source, { flag: 'wx' })));
 }
 
 async function runComparator(directory, challengeExport, theoremNames, env, deadline, signal) {
@@ -204,8 +202,10 @@ async function runComparator(directory, challengeExport, theoremNames, env, dead
   }
 }
 
-export async function judgeLean({ challenge, solution, theorem, theorems, timeoutMs, signal, scratch }) {
-  const theoremNames = checkRequest({ challenge, solution, theorem, theorems, timeoutMs, signal, scratch });
+export async function judgeLean({ challenge, solution, theorem, theorems, modules = [], timeoutMs, signal, scratch }) {
+  const { theoremNames, approvedModules } = checkRequest({
+    challenge, solution, theorem, theorems, modules, timeoutMs, signal, scratch,
+  });
   if (process.platform !== 'linux') throw new Error('Lean proof judging requires Linux with Lake comparator bubblewrap support');
   const deadline = Date.now() + timeoutMs;
   const env = commandEnvironment();
@@ -215,7 +215,8 @@ export async function judgeLean({ challenge, solution, theorem, theorems, timeou
   const solutionProject = join(root, 'solution');
   const challengeExport = join(root, 'challenge.ndjson');
   try {
-    await prepareProject(challengeProject, 'verity_lean_challenge', 'Challenge.lean', challenge, challengeLakefile);
+    await prepareProject(challengeProject, 'verity_lean_challenge', 'Challenge.lean', challenge,
+      lakefileText('verity_lean_challenge', 'Challenge', approvedModules), approvedModules);
     const version = await runRequired('lake', ['--version'], {
       cwd: challengeProject, env, deadline, signal,
     });
@@ -229,7 +230,8 @@ export async function judgeLean({ challenge, solution, theorem, theorems, timeou
       cwd: challengeProject, env, deadline, signal,
     });
     await exportChallenge(challengeProject, challengeExport, env, deadline, signal);
-    await prepareProject(solutionProject, 'verity_lean_solution', 'Solution.lean', solution, solutionLakefile);
+    await prepareProject(solutionProject, 'verity_lean_solution', 'Solution.lean', solution,
+      lakefileText('verity_lean_solution', 'Solution', approvedModules), approvedModules);
     return await runComparator(solutionProject, challengeExport, theoremNames, env, deadline, signal);
   } finally {
     await rm(root, { recursive: true, force: true });

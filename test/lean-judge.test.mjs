@@ -6,6 +6,9 @@ import { judgeLean, leanEnvironment } from '../src/lean-judge.mjs';
 
 const challenge = 'theorem target : ∀ n : Nat, n = n := by\n  sorry\n';
 const correctSolution = 'theorem target : ∀ n : Nat, n = n := by\n  intro n\n  rfl\n';
+const helperSource = 'theorem sameNat (n : Nat) : n = n := rfl\n';
+const helperChallenge = 'import VerityFixture\ntheorem target : ∀ n : Nat, n = n := by\n  intro n\n  exact sameNat n\n';
+const helperSolution = 'import VerityFixture\ntheorem target : ∀ n : Nat, n = n := by\n  intro n\n  exact sameNat n\n';
 
 async function fixture(t) {
   const scratch = resolve('tmp');
@@ -38,6 +41,21 @@ test('rejects invalid theorem names before the platform or toolchain check', asy
   });
 });
 
+test('rejects malformed or colliding approved helper modules before the platform check', async t => {
+  const scratch = await fixture(t);
+  const options = { challenge, solution: correctSolution, theorem: 'target', timeoutMs: 1000, scratch };
+  await assert.rejects(judgeLean({ ...options, modules: null }), /at most 16 approved local modules/);
+  await assert.rejects(judgeLean({ ...options, modules: [{ name: 'Helper', source: helperSource }] }), /Invalid or duplicate/);
+  await assert.rejects(judgeLean({ ...options, modules: [
+    { name: 'VerityFixture', source: helperSource },
+    { name: 'Verityfixture', source: helperSource },
+  ] }), /Invalid or duplicate/);
+  await assert.rejects(judgeLean({ ...options, modules: [{ name: 'VerityFixture', source: '\ud800' }] }), /Invalid or duplicate/);
+  await assert.rejects(judgeLean({ ...options, modules: Array.from({ length: 17 }, (_, index) => ({
+    name: 'VerityModule' + index, source: helperSource,
+  })) }), /at most 16 approved local modules/);
+});
+
 test('keeps the trusted challenge and candidate in separate projects and fails closed on tool errors', {
   skip: process.platform !== 'linux',
 }, async t => {
@@ -59,7 +77,13 @@ if [ "$command" = "build" ]; then
   test -f Challenge.lean
   test ! -f Solution.lean
   test ! -e ../solution
-  grep -F sorry Challenge.lean >/dev/null
+  if [ -e "$bin/require-helper" ]; then
+    test -f VerityFixture.lean
+    grep -F 'name = "VerityFixture"' lakefile.toml >/dev/null
+    grep -F 'import VerityFixture' Challenge.lean >/dev/null
+  else
+    grep -F sorry Challenge.lean >/dev/null
+  fi
   exit 0
 fi
 if [ "$command" = "env" ]; then
@@ -74,6 +98,12 @@ fi
 if [ "$command" = "comparator" ]; then
   test -f Solution.lean
   test ! -f Challenge.lean
+  if [ -e "$bin/require-helper" ]; then
+    test -f VerityFixture.lean
+    cmp -s VerityFixture.lean ../challenge/VerityFixture.lean
+    grep -F 'name = "VerityFixture"' lakefile.toml >/dev/null
+    grep -F 'import VerityFixture' Solution.lean >/dev/null
+  fi
   grep -F '"theorem_names"' comparator.json >/dev/null
   grep -F '"Namespace.target"' comparator.json >/dev/null
   if [ -e "$bin/require-second" ]; then grep -F '"Namespace.second"' comparator.json >/dev/null; fi
@@ -117,10 +147,12 @@ exit 77
   process.env.PATH = bin + delimiter + priorPath;
   for (const name of injected.keys()) process.env[name] = 'must-not-reach-judge';
   try {
+    await writeFile(join(bin, 'require-helper'), '');
     await writeFile(join(bin, 'exit'), '0');
     const accepted = await judgeLean({
-      challenge,
-      solution: correctSolution,
+      challenge: helperChallenge,
+      solution: helperSolution,
+      modules: [{ name: 'VerityFixture', source: helperSource }],
       theorem: 'Namespace.target',
       timeoutMs: 10000,
       scratch: root,
@@ -130,6 +162,7 @@ exit 77
       stdout: 'accepted\n',
       stderr: 'comparator diagnostics\n',
     });
+    await rm(join(bin, 'require-helper'));
 
     await writeFile(join(bin, 'exit'), '0');
     await writeFile(join(bin, 'require-second'), '');
@@ -220,6 +253,22 @@ test('Lake Comparator accepts a matching theorem and rejects an axiom, weaker st
   const missingRejected = await judgeLean({ ...options, challenge, solution: missing });
   assert.equal(missingRejected.accepted, false, missingRejected.stderr + missingRejected.stdout);
   assert.match(missingRejected.stderr + missingRejected.stdout, /Const not found in solution: 'target'|Constant target not found in environment/);
+
+  const helperAccepted = await judgeLean({
+    ...options,
+    challenge: helperChallenge,
+    solution: helperSolution,
+    modules: [{ name: 'VerityFixture', source: helperSource }],
+  });
+  assert.equal(helperAccepted.accepted, true, helperAccepted.stderr + helperAccepted.stdout);
+  const changedHelperResult = await judgeLean({
+    ...options,
+    challenge: helperChallenge,
+    solution: 'import VerityFixture\ntheorem target : True := True.intro\n',
+    modules: [{ name: 'VerityFixture', source: helperSource }],
+  });
+  assert.equal(changedHelperResult.accepted, false, changedHelperResult.stderr + changedHelperResult.stdout);
+  assert.match(changedHelperResult.stderr + changedHelperResult.stdout, /theorem statement do not match/);
 });
 
 test('Lake Comparator checks every requested theorem in a linked proof chain', {
