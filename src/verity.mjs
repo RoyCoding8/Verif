@@ -128,7 +128,7 @@ export function inspectRun({ repository, journalPath, tasks: inputs, requeue }) 
       requireThat(!pending, 'Recover prepared operation ' + pending?.id + ' before requeueing');
       journal.requeueTask(runId, requeue);
     }
-    return { runId, tasks: journal.runTasks(runId), verifierRefusals: journal.verifierRefusals(runId) };
+    return { runId, tasks: journal.runTasks(runId), verifierRefusals: journal.verifierRefusals(runId), modelUsage: journal.modelUsage(runId) };
   } finally {
     journal.close();
   }
@@ -222,36 +222,39 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
       const workspace = join(temporary, 'worker');
       repo.fork(base, workspace);
       if (contract.revertOperation) repo.revertIn(workspace, rollbackTarget(repo, journal, context.repository, contract, base));
-      else await worker({
-        workspace, goal: contract.goal + diagnosis, scope: contract.scope, signal,
-        ...(route ? { route } : {}),
-        reserveToolCall: () => {
-          requireAttemptAuthority(journal, attempt, task.approval, policy, 'tool calls');
-          if (contract.policy.maxToolCalls !== undefined) journal.reserveUsage(attempt, 'tool calls', 1, contract.policy.maxToolCalls);
-        },
-        approvedChecks: [...feedbackChecks],
-        runCheck: feedbackChecks.length === 0 ? undefined : async (name, options) => {
-          requireThat(!checking, 'A feedback check is already running');
-          requireThat(feedbackChecks.includes(name), 'Unknown approved check ' + name);
-          requireAttemptAuthority(journal, attempt, task.approval, policy, 'feedback checks');
-          checking = true;
-          try {
-            const snapshot = repo.capture(workspace, base);
-            const checkSignal = options?.signal ? AbortSignal.any([signal, options.signal]) : signal;
-            const result = await checkFeedback({
-              repo, task, name, base, candidate: snapshot, oracleRoot, scratch, signal: checkSignal, deadline,
-              reserveVerification: resourceReservation(journal, attempt, 'verification time', contract.policy.maxVerificationMs),
-              proofDependencies: resolveProofDependencies(task, runId, prerequisites, journal),
-            });
+      else {
+        const report = await worker({
+          workspace, goal: contract.goal + diagnosis, scope: contract.scope, signal,
+          ...(route ? { route } : {}),
+          reserveToolCall: () => {
+            requireAttemptAuthority(journal, attempt, task.approval, policy, 'tool calls');
+            if (contract.policy.maxToolCalls !== undefined) journal.reserveUsage(attempt, 'tool calls', 1, contract.policy.maxToolCalls);
+          },
+          approvedChecks: [...feedbackChecks],
+          runCheck: feedbackChecks.length === 0 ? undefined : async (name, options) => {
+            requireThat(!checking, 'A feedback check is already running');
+            requireThat(feedbackChecks.includes(name), 'Unknown approved check ' + name);
             requireAttemptAuthority(journal, attempt, task.approval, policy, 'feedback checks');
-            return result;
-          } catch (error) {
-            return 'Feedback failed: ' + error.message;
-          } finally {
-            checking = false;
-          }
-        },
-      });
+            checking = true;
+            try {
+              const snapshot = repo.capture(workspace, base);
+              const checkSignal = options?.signal ? AbortSignal.any([signal, options.signal]) : signal;
+              const result = await checkFeedback({
+                repo, task, name, base, candidate: snapshot, oracleRoot, scratch, signal: checkSignal, deadline,
+                reserveVerification: resourceReservation(journal, attempt, 'verification time', contract.policy.maxVerificationMs),
+                proofDependencies: resolveProofDependencies(task, runId, prerequisites, journal),
+              });
+              requireAttemptAuthority(journal, attempt, task.approval, policy, 'feedback checks');
+              return result;
+            } catch (error) {
+              return 'Feedback failed: ' + error.message;
+            } finally {
+              checking = false;
+            }
+          },
+        });
+        journal.recordModelUsage(attempt, report?.usage);
+      }
       signal.throwIfAborted();
       const candidate = repo.capture(workspace, base);
       return await integrate(context, task, claim, attempt, base, candidate, deadline, signal, prerequisites);

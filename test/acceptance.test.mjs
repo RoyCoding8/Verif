@@ -102,10 +102,12 @@ test('retry dispatch uses the next approved model and binds the route to approva
     seen.push(job.route);
     if (seen.length === 1) throw new Error('fixture refused the first model');
     await fixtureWorker(job);
+    return { usage: { tokens: { total: 46 }, estimatedCost: 0.004 } };
   } });
   assert.equal(result.status, 'promoted', JSON.stringify(result));
   assert.deepEqual(seen, modelRoute);
   assert.deepEqual(events.filter(event => event.type === 'attempt_started').map(event => event.route), modelRoute);
+  assert.deepEqual(inspectRun({ ...settings, tasks: [task] }).modelUsage, { reportedAttempts: 1, tokens: 46, estimatedCost: 0.004 });
   await assert.rejects(runTasks({ ...settings, tasks: [{ ...task, policy: { ...task.policy, modelRoute: [...modelRoute].reverse() } }] }),
     /principal approval/);
 });

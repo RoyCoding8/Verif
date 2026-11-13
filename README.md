@@ -38,6 +38,8 @@ Use `status` to see persisted task outcomes. `run` prints an attempt ID when a w
 
 `status` includes verifier verdict mismatches with the attempt, obligation, candidate snapshot and evidence identity. Held-out failures stay in the controller journal. Retry prompts receive the generic refusal and any explicitly approved feedback.
 
+`status` also totals model tokens and estimated cost for attempts that returned usage. The report includes the number of such attempts. Interrupted sessions can incur charges before they report usage.
+
 To choose the Pi model, set `policy.modelRoute` to an ordered list of exact `{provider, model}` pairs. Each reserved attempt advances through that list and reuses its final entry when the list is exhausted. The provider needs credentials on the controller host. Route changes require a new principal approval.
 
 Set `policy.maxToolCalls` to cap Pi tool calls and `policy.maxVerificationMs` to cap the sum of timeouts reserved for new verifier executions. Both allowances are shared by a task's attempts and survive restart. Feedback checks and final verification draw from the same verifier allowance. A cache hit uses no new verifier reservation.

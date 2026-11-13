@@ -133,6 +133,11 @@ export class Journal {
         payload TEXT NOT NULL,
         PRIMARY KEY (attempt, evidence)
       );
+      CREATE TABLE IF NOT EXISTS model_usage (
+        attempt TEXT PRIMARY KEY REFERENCES attempts(id),
+        tokens INTEGER NOT NULL CHECK (tokens >= 0),
+        estimated_cost REAL NOT NULL CHECK (estimated_cost >= 0)
+      );
       CREATE TABLE IF NOT EXISTS run_tasks (
         run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
         task_id TEXT NOT NULL,
@@ -306,6 +311,22 @@ export class Journal {
       SELECT records.attempt, attempts.task_id, records.payload FROM verifier_refusals records
       JOIN attempts ON attempts.id = records.attempt WHERE attempts.run_id = ? ORDER BY records.rowid
     `).all(requireString(runId, 'runId')).map(row => ({ task: row.task_id, attempt: row.attempt, ...JSON.parse(row.payload) }));
+  }
+
+  recordModelUsage(attempt, usage) {
+    const tokens = usage?.tokens?.total;
+    const cost = usage?.estimatedCost;
+    if (!Number.isSafeInteger(tokens) || tokens < 0 || !Number.isFinite(cost) || cost < 0) return;
+    this.#db.prepare('INSERT OR IGNORE INTO model_usage (attempt, tokens, estimated_cost) VALUES (?, ?, ?)')
+      .run(requireString(attempt, 'attempt'), tokens, cost);
+  }
+
+  modelUsage(runId) {
+    const { attempts, tokens, estimatedCost } = this.#db.prepare(`
+      SELECT COUNT(*) AS attempts, COALESCE(SUM(tokens), 0) AS tokens, COALESCE(SUM(estimated_cost), 0) AS estimatedCost
+      FROM model_usage JOIN attempts ON attempts.id = model_usage.attempt WHERE attempts.run_id = ?
+    `).get(requireString(runId, 'runId'));
+    return { reportedAttempts: attempts, tokens, estimatedCost };
   }
 
   invalidate(id) {
