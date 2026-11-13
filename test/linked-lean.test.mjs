@@ -6,6 +6,8 @@ import { approve, createDemo } from '../examples/setup.mjs';
 import { hash } from '../src/contracts.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { Journal } from '../src/journal.mjs';
+import { resolveProofDependencies } from '../src/proof-dependencies.mjs';
+import { decide } from '../src/verify.mjs';
 import { runTasks } from '../src/verity.mjs';
 
 const upstream = 'theorem Link.upstream (n : Nat) : n + 0 = n := by rfl\n';
@@ -71,9 +73,18 @@ test('controller composes promoted Lean evidence and refuses missing, changed, o
       assert.equal(head, results[1].commit);
       const journal = new Journal(settings.journalPath);
       try {
-        const { evidence } = journal.getOperation(results[1].operation).receipt;
+        const operation = journal.getOperation(results[1].operation);
+        const { evidence, task, base, candidate, deadline, runId, prerequisites } = operation.receipt;
         assert.deepEqual(evidence.results[0].proof.theorems, ['Link.upstream', 'Link.downstream']);
         assert.deepEqual(evidence.results[0].proof.sources.map(source => source.path), ['Up.lean', 'Down.lean']);
+        const repo = new GitRepo(settings.repository);
+        const dependencies = resolveProofDependencies(task, runId, prerequisites, journal);
+        const input = { task, receipt: evidence, base, candidate, deadline, now: deadline - 1,
+          authority: { active: true, contract: operation.contract, policy: operation.policy }, changedPaths: ['Down.lean'],
+          manifests: new Map([[candidate, repo.manifest(operation.next)]]), proofDependencies: dependencies };
+        assert.deepEqual(decide(input), { promote: true });
+        dependencies.get('downstream')[0].receipt = '0'.repeat(64);
+        assert.deepEqual(decide(input), { promote: false, reason: 'Stale proof dependency for downstream' });
       } finally {
         journal.close();
       }
