@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { normalizeModelRoute } from './model-route.mjs';
 
 const levels = new Map([['tested', 0], ['bounded', 1], ['formal', 2]]);
-const methods = new Map([['node-test', 'tested'], ['node-property', 'tested'], ['finite-domain', 'bounded'], ['lean-comparator', 'formal']]);
+const methods = new Map([['node-test', 'tested'], ['node-property', 'tested'], ['node-history', 'tested'],
+  ['finite-domain', 'bounded'], ['lean-comparator', 'formal']]);
 
 export function requireThat(condition, message) {
   if (!condition) throw new Error(message);

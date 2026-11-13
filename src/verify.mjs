@@ -7,6 +7,7 @@ import { judgeLean, leanEnvironment } from './lean-judge.mjs';
 import { leanClaimChallenge, readLeanDefinitions } from './lean-claim.mjs';
 import { proofSources } from './proof-dependencies.mjs';
 import { expandSampledCases, sampleGenerator } from './sampled-cases.mjs';
+import { checkHistory, parseHistoryOracle } from './history-check.mjs';
 
 const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
@@ -15,6 +16,7 @@ const environment = { runtime: process.version, platform: process.platform, arch
 const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './contracts.mjs', './git.mjs'].map(async path =>
   hash(await readFile(new URL(path, import.meta.url))))));
 const samplingAdapter = hash(await readFile(new URL('./sampled-cases.mjs', import.meta.url)));
+const historyAdapter = hash(await readFile(new URL('./history-check.mjs', import.meta.url)));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
   adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs', './lean-claim.mjs', './proof-dependencies.mjs'].map(async path =>
     hash(await readFile(new URL(path, import.meta.url)))))) };
@@ -26,6 +28,7 @@ function environmentFor(plan) {
 function evidenceEnvironment(obligation) {
   if (obligation.method === 'lean-comparator') return proofEnvironment;
   if (obligation.method === 'node-property') return { ...reuseEnvironment(), samplingAdapter };
+  if (obligation.method === 'node-history') return { ...reuseEnvironment(), historyAdapter };
   return obligation.inputPaths ? reuseEnvironment() : environment;
 }
 
@@ -113,7 +116,14 @@ function nodeInputs(cases, obligation, claim, manifest) {
   return inputs;
 }
 
-async function prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies, oracleRoot) {
+function historyInputs(oracle, obligation, claim, manifest, deadline) {
+  const history = parseHistoryOracle(oracle, { deadline });
+  const inputs = nodeInputs(history.cases.map(item => ({ ...item, expected: item.expect })), obligation, claim, manifest);
+  return { ...history, inputs: inputs.map((input, index) => ({ ...input, calls: history.cases[index].calls })) };
+}
+
+async function prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies, oracleRoot, deadline) {
+  if (obligation.method === 'node-history') return historyInputs(oracle, obligation, claim, manifest, deadline);
   if (obligation.method === 'node-property') {
     const cases = expandSampledCases(oracle);
     const { seed, samples } = oracle;
@@ -163,7 +173,29 @@ async function evaluateNode({ inputs, obligation, workspace, timeout, signal, te
   return { version: 1, method: obligation.method, observations, stdout, stderr, exit: 0 };
 }
 
-function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prepared }) {
+function historyVerdict(machine, scenario, observed, deadline) {
+  const linearizable = checkHistory(machine, observed, { deadline });
+  const calls = scenario.calls.flat();
+  requireThat(observed.length === calls.length && observed.every(({ operation, input, invocation }, index) =>
+    operation === calls[index].operation && digest(input) === digest(calls[index].input) &&
+    (index === 0 || observed[index - 1].invocation < invocation)), 'Observed history does not match approved calls');
+  let overlapping = false;
+  let offset = 0;
+  let lastResponse = -1;
+  for (const phase of scenario.calls) {
+    const phaseHistory = observed.slice(offset, offset + phase.length);
+    requireThat(phaseHistory[0].invocation > lastResponse, 'Observed history crossed approved call phases');
+    for (const call of phaseHistory) {
+      overlapping ||= lastResponse > call.invocation;
+      lastResponse = Math.max(lastResponse, call.response);
+    }
+    offset += phase.length;
+  }
+  const expected = scenario.expect === 'linearizable';
+  return { status: linearizable === expected ? 'PASS' : 'FAIL', overlapping: expected && overlapping };
+}
+
+function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prepared, deadline }) {
   let level;
   let output;
   let statuses;
@@ -178,11 +210,17 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
     requireThat(raw?.version === 1 && raw.method === obligation.method && raw.exit === 0 &&
       typeof raw.stdout === 'string' && typeof raw.stderr === 'string' && Array.isArray(raw.observations) &&
       raw.observations.length === cases.length, 'Invalid cached Node observations for ' + obligation.id);
+    const history = obligation.method === 'node-history';
+    let overlap = false;
     const observed = raw.observations.map((item, index) => {
       requireThat(item && item.id === cases[index].id && Object.hasOwn(item, 'actual') && item.actual !== undefined,
         'Wrong cached observation for ' + obligation.id);
-      return { id: item.id, status: digest(item.actual) === digest(cases[index].expected) ? 'PASS' : 'FAIL' };
+      if (!history) return { id: item.id, status: digest(item.actual) === digest(cases[index].expected) ? 'PASS' : 'FAIL' };
+      const verdict = historyVerdict(prepared.machine, cases[index], item.actual, deadline);
+      overlap ||= verdict.overlapping;
+      return { id: item.id, status: verdict.status };
     });
+    requireThat(!history || overlap, 'No overlapping calls observed in approved positive histories');
     level = obligation.method === 'finite-domain' ? 'bounded' : 'tested';
     statuses = observed;
     output = { cases: observed, observations: raw.observations,
@@ -206,7 +244,8 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
 }
 
 function cacheAuthority(journal, attempt, task, obligation) {
-  if (!journal || !attempt || task.contract.policy.reuseEvidence !== true || obligation.method === 'lean-comparator') return false;
+  if (!journal || !attempt || task.contract.policy.reuseEvidence !== true ||
+    ['lean-comparator', 'node-history'].includes(obligation.method)) return false;
   const authority = journal.authority(attempt);
   return authority?.active === true && authority.contract === task.approval &&
     authority.policy === digest(task.contract.policy);
@@ -223,8 +262,15 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     await assertMaterialization(workspace, manifest);
     const oracle = JSON.parse(bytes.toString('utf8'));
     requireThat(dependencies.length === (obligation.proofDependencies?.length ?? 0), 'Missing verified proof dependencies');
-    const prepared = await prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies, oracleRoot);
-    const timeout = Math.min(obligation.timeoutMs, deadline - Date.now());
+    const history = obligation.method === 'node-history';
+    const started = Date.now();
+    const checkDeadline = Math.min(deadline, started + obligation.timeoutMs);
+    if (history) {
+      requireThat(checkDeadline > started, 'Task budget expired');
+      reserveVerification?.(checkDeadline - started);
+    }
+    const prepared = await prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies, oracleRoot, checkDeadline);
+    const timeout = history ? checkDeadline - Date.now() : Math.min(obligation.timeoutMs, deadline - Date.now());
     requireThat(timeout > 0, 'Task budget expired');
     const cacheEnabled = cacheAuthority(journal, attempt, task, obligation);
     const cacheKey = cacheEnabled ? evidenceReuseKey({ obligation, claim, subject: commit, tree: manifest.tree, manifest,
@@ -234,21 +280,21 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     let remember = false;
     if (raw) {
       try {
-        result = presentEvidence(raw, { obligation, claim, commit, manifest, cases: prepared.cases, prepared });
+        result = presentEvidence(raw, { obligation, claim, commit, manifest, cases: prepared.cases, prepared, deadline: checkDeadline });
       } catch {
         raw = null;
       }
     }
     if (!raw) {
       const evaluate = obligation.method === 'lean-comparator' ? evaluateLean : evaluateNode;
-      reserveVerification?.(timeout);
+      if (!history) reserveVerification?.(timeout);
       raw = await evaluate({ prepared, inputs: prepared.inputs, obligation, workspace, timeout, signal, temp });
       await assertMaterialization(workspace, manifest);
-      result = presentEvidence(raw, { obligation, claim, commit, manifest, cases: prepared.cases, prepared });
+      result = presentEvidence(raw, { obligation, claim, commit, manifest, cases: prepared.cases, prepared, deadline: checkDeadline });
       remember = true;
     }
     signal?.throwIfAborted();
-    requireThat(Date.now() < deadline, 'Task budget expired');
+    requireThat(Date.now() < (history ? checkDeadline : deadline), history ? 'History verification deadline expired' : 'Task budget expired');
     if (remember && cacheEnabled && cacheAuthority(journal, attempt, task, obligation)) journal.rememberEvidence(cacheKey, raw);
     return result;
   } finally {

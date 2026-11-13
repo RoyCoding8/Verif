@@ -161,6 +161,62 @@ test('rollback is an approved candidate with its own checks and preserves later 
   assert.deepEqual(repo.changedPaths(initial, reverted.commit), ['reserve.mjs']);
 });
 
+test('recorded histories reject overselling and missing overlap before promotion', async t => {
+  const settings = await fixture(t);
+  const oracleRoot = join(settings.scratch, 'history-oracles');
+  await mkdir(oracleRoot, { recursive: true });
+  const reserve = { operation: 'reserve', input: 1 };
+  const bytes = JSON.stringify({
+    machine: { initial: 'available', transitions: [
+      { ...reserve, from: 'available', to: 'empty', output: true },
+      { ...reserve, from: 'empty', to: 'empty', output: false },
+    ] },
+    cases: [{ id: 'two-reservations', module: 'reserve.mjs', name: 'openStock', args: [1], calls: [[reserve, reserve]], expect: 'linearizable' }],
+    requiredOperations: ['reserve'],
+    negativeControl: [
+      { ...reserve, invocation: 0, response: 2, output: true },
+      { ...reserve, invocation: 1, response: 3, output: true },
+    ],
+  });
+  await writeFile(join(oracleRoot, 'history.json'), bytes);
+  const task = {
+    ...settings.tasks[0], claims: [{ id: 'stock', required: 'tested', statement: 'Concurrent reservations cannot oversell one unit' }],
+    obligations: [{ ...settings.tasks[0].obligations[1], method: 'node-history', cases: ['two-reservations'],
+      oracle: { file: 'history.json', digest: hash(bytes) } }],
+  };
+  const proposal = await proposeTask({ ...settings, oracleRoot, draft: { ...task, oracleFiles: ['history.json'] },
+    worker: async ({ workspace, scope, goal }) => {
+      assert.match(goal, /"calls"/);
+      assert.doesNotMatch(goal, /"negativeControl"/);
+      await writeFile(join(workspace, scope.write[0]), JSON.stringify({ criteria: task.criteria, claims: task.claims,
+        obligations: task.obligations.map(obligation => ({ ...obligation, oracleFile: 'history.json' })) }));
+    } });
+  assert.deepEqual(proposal.plan.obligations[0].oracle, task.obligations[0].oracle);
+  const repo = new GitRepo(settings.repository);
+  const initial = repo.readRef(task.policy.ref);
+  const run = (revision, body) => runTasks({ ...settings, oracleRoot, tasks: [approve({ ...task, revision })],
+    worker: async ({ workspace }) => writeFile(join(workspace, 'reserve.mjs'),
+      `export function openStock(stock) { return { ${body} }; }\n`) });
+  const [race] = await run(1, 'async reserve(quantity) { const available = stock; await Promise.resolve(); if (available < quantity) return false; stock -= quantity; return true; }');
+  assert.match(race.reason, /Unexpected verdict/);
+  const [serial] = await run(2, 'reserve(quantity) { if (stock < quantity) return false; stock -= quantity; return true; }');
+  assert.match(serial.reason, /No overlapping calls observed/);
+  assert.equal(repo.readRef(task.policy.ref), initial);
+  const [accepted] = await run(3, 'async reserve(quantity) { await Promise.resolve(); if (stock < quantity) return false; stock -= quantity; return true; }');
+  assert.equal(accepted.status, 'promoted', JSON.stringify(accepted));
+  assert.deepEqual(accepted.assurance, { stock: 'tested' });
+  const journal = new Journal(settings.journalPath);
+  try {
+    const { evidence } = journal.getOperation(accepted.operation).receipt;
+    const artifact = JSON.parse(Buffer.from(evidence.results[0].artifacts['cases.json'].base64, 'base64'));
+    const [first, second] = artifact.observations[0].actual;
+    assert.ok(first.invocation < second.invocation && second.invocation < first.response);
+    assert.deepEqual([first.output, second.output], [true, false]);
+  } finally {
+    journal.close();
+  }
+});
+
 test('seeded property checks execute generated cases and retain the sampling recipe', async t => {
   const settings = await fixture(t);
   const oracleRoot = join(settings.scratch, 'property-oracles');
