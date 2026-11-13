@@ -57,7 +57,8 @@ jobs:
             grep -Fx "'VerityAttemptBudget.$theorem' does not depend on any axioms" "$RUNNER_TEMP/attempt-budget-axioms.txt"
           done
           lake env lean -DwarningAsError=true PromotionLawAudit.lean > "$RUNNER_TEMP/promotion-axioms.txt"
-          for theorem in executeSafe executeAtMostOneWrite executePreservesWrites matchingFencesWrite movedHeadRejects revokedAuthorityRejects unapprovedTargetRejects noOpTargetRejects recoveryAfterWriteOnlyRecordsOutcome successfulRecoveryTrace retryAfterAppliedDoesNotWrite; do
+          grep -Fx "'VerityPromotion.initialSafe' does not depend on any axioms" "$RUNNER_TEMP/promotion-axioms.txt"
+          for theorem in stepSafe stepPreservesWrite executeSafe executeAtMostOneWrite executePreservesWrites matchingFencesWrite movedHeadRejects revokedAuthorityRejects unapprovedTargetRejects noOpTargetRejects recoveryAfterWriteOnlyRecordsOutcome successfulRecoveryTrace retryAfterAppliedDoesNotWrite; do
             grep -Ex "'VerityPromotion\.$theorem' (does not depend on any axioms|depends on axioms: \[(propext|Quot\.sound|propext, Quot\.sound)\])" "$RUNNER_TEMP/promotion-axioms.txt"
           done
           lake env lean -DwarningAsError=true HistoryLawAudit.lean > "$RUNNER_TEMP/history-axioms.txt"
