@@ -167,7 +167,6 @@ async function runNodeDifferential({ repo, obligation, claim, base, candidate, m
   const cases = differentialCases(obligation, comparisons);
   const report = readReport({ cases }, obligation);
   const output = { cases, comparisons };
-  if (prepared.mutation) output.mutants = prepared.mutation.results;
   const artifacts = Object.fromEntries(obligation.outputs.map(path => {
     const contents = Buffer.from(stableJson(output));
     return [path, { digest: hash(contents), base64: contents.toString('base64') }];
@@ -302,6 +301,7 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
       ...(prepared.sampling ? { sampling: prepared.sampling } : {}) };
   }
   const report = readReport({ cases: statuses }, obligation);
+  if (prepared.mutation) output.mutants = prepared.mutation.results;
   const artifacts = Object.fromEntries(obligation.outputs.map(path => {
     const contents = Buffer.from(stableJson(output));
     return [path, { digest: hash(contents), base64: contents.toString('base64') }];
