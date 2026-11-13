@@ -44,9 +44,9 @@ jobs:
           kani -Z unstable-options verification/kani/smoke.rs --harness verity_counterexample --export-json kani-counterexample.json
           result=$?
           set -e
-          echo "exit-code=$result" >> "$GITHUB_OUTPUT"
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
           echo "counterexample exit code: $result"
-          test "$result" -ne 0
+          test "$result" -eq 1
           test -s kani-counterexample.json
           cat kani-counterexample.json
       - name: Observe an unreachable probe control
@@ -55,13 +55,28 @@ jobs:
           test -s kani-unreachable.json
           cat kani-unreachable.json
       - name: Observe a Kani CLI error
-        id: cli-error
+        id: cli_error
         run: |
           set +e
           kani -Z unstable-options verification/kani/smoke.rs --export-json kani-cli-error.json --verity-invalid-option
           result=$?
           set -e
-          echo "exit-code=$result" >> "$GITHUB_OUTPUT"
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
           echo "CLI error exit code: $result"
-          test "$result" -ne 0
+          test "$result" -eq 2
           test ! -e kani-cli-error.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee
+        with:
+          lake-package-directory: verification/lean
+          auto-config: false
+          build: false
+          use-mathlib-cache: false
+      - name: Check the finite Kani verdict contract
+        env:
+          VERITY_KANI_SMOKE: '1'
+          VERITY_KANI_COUNTEREXAMPLE_EXIT_CODE: ${{ steps.counterexample.outputs.exit_code }}
+          VERITY_KANI_CLI_ERROR_EXIT_CODE: ${{ steps.cli_error.outputs.exit_code }}
+        run: node --test test/kani-judge.test.mjs

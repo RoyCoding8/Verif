@@ -14,6 +14,7 @@ fn verity_counterexample() {
     let input: u8 = kani::any();
     let output = subject::broken_cap(input);
     assert!(output <= 10);
+    kani::cover!(output > 10);
 }
 
 #[kani::proof]
