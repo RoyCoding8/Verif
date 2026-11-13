@@ -147,7 +147,7 @@ Safety ==
      /\ writtenOwner = opOwner
      /\ writtenTarget = opTarget
 
-PositiveWrite == phase \in {"ref-written", "recorded"}
+NoWrite == phase \notin {"ref-written", "recorded"}
 
 IndInv == TypeOK /\ PreparedShape /\ Safety
 
