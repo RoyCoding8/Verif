@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { parseKaniOracle } from './kani-judge.mjs';
+import { parseMutationOracle } from './node-mutation.mjs';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import { digest, hash, leanModuleDigests, makeContract, parseLeanOracle, planVerification, requireThat, safePath, text } from './contracts.mjs';
@@ -43,6 +44,11 @@ async function catalogFor(root, files) {
       const { source, name } = parseKaniOracle(records);
       return [file, { ...identity, cases: [name], inputs: { source, name }, method: 'kani' }];
     }
+    if (records?.kind === 'node-mutation-v1') {
+      const { cases } = parseMutationOracle(records);
+      const inputs = cases.map(({ id, module, name, args }) => ({ id, module, name, args }));
+      return [file, { ...identity, cases: inputs.map(item => item.id), inputs, method: 'node-mutation' }];
+    }
     const oracle = parseLeanOracle(records);
     const leanModules = leanModuleDigests(oracle.modules);
     return [file, { ...identity, cases: [oracle.theorem], inputs: oracle, method: 'lean-comparator', leanModules }];
@@ -76,6 +82,8 @@ export async function proposeTask({ repository, oracleRoot, scratch, draft, work
       'Use node-property for an approved seeded property oracle whose catalog entry has a sample count.',
       'Use node-history for an approved concurrent history oracle whose catalog entry has call phases.',
       'Use node-differential for ordinary cases with no expected outputs; it compares a fresh base execution with the exact candidate.',
+      'Use node-mutation for an approved mutation catalog entry and a positive candidate obligation on the full snapshot.',
+      'Use kani for an approved Kani catalog entry and a bounded Rust harness obligation.',
       'The plan needs a positive candidate obligation for each claim. A FAIL obligation must name its expected failing case ID.',
       'Supported optional output: cases.json. Budget in milliseconds: ' + draft.policy.budgetMs + '.',
       'Approved oracle choices and inputs: ' + JSON.stringify([...catalog.values()].map(({ file, inputs }) => ({ file, inputs }))),
@@ -97,7 +105,7 @@ export async function proposeTask({ repository, oracleRoot, scratch, draft, work
     const obligations = proposed.obligations.map(({ oracleFile, leanModules: _proposedModules, ...fields }) => {
       const oracle = catalog.get(oracleFile);
       requireThat(oracle, 'Planner selected an unapproved oracle ' + oracleFile);
-      const special = ['lean-comparator', 'node-property', 'node-history', 'node-differential', 'kani'].includes(fields.method) ? fields.method : undefined;
+      const special = ['lean-comparator', 'node-property', 'node-history', 'node-differential', 'kani', 'node-mutation'].includes(fields.method) ? fields.method : undefined;
       requireThat(oracle.method === special, 'Oracle format does not match method for ' + fields.id);
       return { ...fields, oracle: { file: oracle.file, digest: oracle.digest }, cases: oracle.cases,
         ...(oracle.leanModules?.length ? { leanModules: oracle.leanModules } : {}) };

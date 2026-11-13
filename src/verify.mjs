@@ -9,6 +9,7 @@ import { proofSources } from './proof-dependencies.mjs';
 import { expandSampledCases, sampleGenerator } from './sampled-cases.mjs';
 import { checkHistory, parseHistoryOracle } from './history-check.mjs';
 import { classifyKaniReport, kaniHarness, kaniJudgePin, parseKaniOracle, runKani } from './kani-judge.mjs';
+import { checkMutationRun, parseMutationOracle } from './node-mutation.mjs';
 
 const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
@@ -19,6 +20,7 @@ const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs',
 const samplingAdapter = hash(await readFile(new URL('./sampled-cases.mjs', import.meta.url)));
 const historyAdapter = hash(await readFile(new URL('./history-check.mjs', import.meta.url)));
 const kaniAdapter = hash(await readFile(new URL('./kani-judge.mjs', import.meta.url)));
+const mutationAdapter = hash(await readFile(new URL('./node-mutation.mjs', import.meta.url)));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
   adapter: digest(await Promise.all(['./verify.mjs', './contracts.mjs', './lean-judge.mjs', './lean-claim.mjs', './proof-dependencies.mjs'].map(async path =>
     hash(await readFile(new URL(path, import.meta.url)))))) };
@@ -28,6 +30,7 @@ function environmentFor(plan) {
 }
 
 function evidenceEnvironment(obligation) {
+  if (obligation.method === 'node-mutation') return { ...reuseEnvironment(), mutationAdapter };
   if (obligation.method === 'kani') return { ...reuseEnvironment(), kaniAdapter, pin: kaniJudgePin };
   if (obligation.method === 'lean-comparator') return proofEnvironment;
   if (obligation.method === 'node-differential') return reuseEnvironment();
@@ -164,6 +167,7 @@ async function runNodeDifferential({ repo, obligation, claim, base, candidate, m
   const cases = differentialCases(obligation, comparisons);
   const report = readReport({ cases }, obligation);
   const output = { cases, comparisons };
+  if (prepared.mutation) output.mutants = prepared.mutation.results;
   const artifacts = Object.fromEntries(obligation.outputs.map(path => {
     const contents = Buffer.from(stableJson(output));
     return [path, { digest: hash(contents), base64: contents.toString('base64') }];
@@ -309,6 +313,7 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
     ...(obligation.method === 'kani' ? { kani: { oracle: prepared.oracleBytes.toString('base64'),
       report: raw.report, sourceDigest: raw.sourceDigest, harnessDigest: raw.harnessDigest } } : {}),
     ...(prepared.sampling ? { sampling: prepared.sampling } : {}),
+    ...(prepared.mutation ? { mutation: prepared.mutation } : {}),
     ...(obligation.proofDependencies ? { proofDependencies: prepared.dependencies } : {}),
     observation: { stdout: hash(raw.stdout), stderr: hash(raw.stderr), exit: raw.exit },
     outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])),
@@ -318,7 +323,7 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
 
 function cacheAuthority(journal, attempt, task, obligation) {
   if (!journal || !attempt || task.contract.policy.reuseEvidence !== true ||
-    ['lean-comparator', 'node-history', 'node-differential'].includes(obligation.method)) return false;
+    ['lean-comparator', 'node-history', 'node-differential', 'kani', 'node-mutation'].includes(obligation.method)) return false;
   const authority = journal.authority(attempt);
   return authority?.active === true && authority.contract === task.approval &&
     authority.policy === digest(task.contract.policy);
@@ -335,6 +340,45 @@ async function runObligation({ repo, task, obligation, claim, base, commit, orac
     await assertMaterialization(workspace, manifest);
     const oracle = JSON.parse(bytes.toString('utf8'));
     requireThat(dependencies.length === (obligation.proofDependencies?.length ?? 0), 'Missing verified proof dependencies');
+    if (obligation.method === 'node-mutation') {
+      const recipe = parseMutationOracle(oracle);
+      const inputs = nodeInputs(recipe.cases, obligation, claim, manifest);
+      const parents = repo.commitObject(commit).parents;
+      requireThat(parents.length === 1, 'Mutation subject requires one parent');
+      const paths = repo.changedPaths(parents[0], commit);
+      const checkDeadline = Math.min(deadline, Date.now() + obligation.timeoutMs);
+      const remaining = checkDeadline - Date.now();
+      requireThat(remaining > 0, 'Mutation deadline expired');
+      reserveVerification?.(remaining);
+      const observe = (workspace, runName) => evaluateNode({ inputs, obligation, workspace, signal, temp, runName,
+        strictJson: true, deadline: checkDeadline });
+      const pristine = await observe(workspace, 'pristine-run');
+      const observations = { pristine: pristine.observations, mutants: [] };
+      requireThat(digest(pristine.observations) === digest(recipe.cases.map(({ id, expected }) => ({ id, actual: expected }))),
+        'Mutation pristine control failed');
+      for (const [index, mutant] of recipe.mutants.entries()) {
+        requireThat(paths.includes(mutant.path), 'Mutant path is outside the candidate changes');
+        const mutantWorkspace = join(temp, 'mutant-' + index);
+        const mutantManifest = repo.materialize(commit, mutantWorkspace);
+        const file = mutantManifest.files.find(entry => entry.path === mutant.path);
+        const original = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+          .decode(await regularFile(mutantWorkspace, mutant.path));
+        const start = original.indexOf(mutant.before);
+        requireThat(start >= 0 && original.indexOf(mutant.before, start + 1) === -1, 'Mutation edit must match exactly once');
+        const mutated = original.slice(0, start) + mutant.after + original.slice(start + mutant.before.length);
+        file.digest = hash(mutated);
+        await writeFile(join(mutantWorkspace, mutant.path), mutated);
+        const observed = await observe(mutantWorkspace, 'mutant-run-' + index);
+        await assertMaterialization(mutantWorkspace, mutantManifest);
+        observations.mutants.push({ id: mutant.id, digest: file.digest, cases: observed.observations });
+      }
+      const results = checkMutationRun(recipe, observations, paths);
+      await assertMaterialization(workspace, manifest);
+      signal?.throwIfAborted();
+      requireThat(Date.now() < checkDeadline, 'Mutation deadline expired');
+      return presentEvidence(pristine, { obligation, claim, commit, manifest, cases: recipe.cases,
+        prepared: { mutation: { oracle: bytes.toString('base64'), observations, results } } });
+    }
     if (obligation.method === 'kani') {
       const recipe = parseKaniOracle(oracle);
       requireThat(recipe.name === obligation.cases[0], 'Kani harness does not match obligation');
@@ -344,6 +388,7 @@ async function runObligation({ repo, task, obligation, claim, base, commit, orac
       requireThat(remaining > 0, 'Kani deadline expired');
       reserveVerification?.(remaining);
       const raw = await runKani({ recipe, source, directory: join(temp, 'kani'), deadline: checkDeadline, signal });
+      requireThat(raw.verdict.reason !== 'probe_unreachable', 'An approved Kani reachability probe was not satisfied');
       await assertMaterialization(workspace, manifest);
       signal?.throwIfAborted();
       requireThat(Date.now() < checkDeadline, 'Kani deadline expired');
@@ -446,6 +491,15 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
       const manifest = restrictManifest(manifests.get(subject), obligation.inputPaths);
       const dependencies = proofDependencies?.get(obligation.id);
       let keys;
+      if (obligation.method === 'node-mutation') {
+        const { oracle, observations, results } = result.mutation;
+        const bytes = Buffer.from(oracle, 'base64');
+        requireThat(hash(bytes) === obligation.oracle.digest, 'Stale mutation oracle');
+        const recipe = parseMutationOracle(JSON.parse(bytes.toString('utf8')));
+        requireThat(digest(recipe.cases.map(c => c.id)) === digest(obligation.cases) &&
+          result.cases.every(c => c.status === 'PASS') &&
+          digest(checkMutationRun(recipe, observations, changedPaths)) === digest(results), 'Mutation receipt mismatch');
+      }
       if (obligation.method === 'kani') {
         const evidence = result.kani;
         const bytes = Buffer.from(evidence.oracle, 'base64');

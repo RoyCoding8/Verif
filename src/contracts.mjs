@@ -3,7 +3,7 @@ import { normalizeModelRoute } from './model-route.mjs';
 
 const levels = new Map([['tested', 0], ['bounded', 1], ['formal', 2]]);
 const methods = new Map([['node-test', 'tested'], ['node-property', 'tested'], ['node-history', 'tested'], ['node-differential', 'tested'],
-  ['finite-domain', 'bounded'], ['kani', 'bounded'], ['lean-comparator', 'formal']]);
+  ['finite-domain', 'bounded'], ['kani', 'bounded'], ['node-mutation', 'tested'], ['lean-comparator', 'formal']]);
 
 export function requireThat(condition, message) {
   if (!condition) throw new Error(message);
@@ -170,6 +170,8 @@ function normalizeObligation(obligation, claims) {
   requireThat(methods.has(method), 'Unsupported verification method ' + method);
   requireThat(method !== 'node-differential' || (subject === 'candidate' && expect === 'PASS'),
     'Node differential obligations require a positive candidate PASS');
+  requireThat(method !== 'node-mutation' || (subject === 'candidate' && expect === 'PASS' && !Object.hasOwn(obligation, 'inputPaths')),
+    'Node mutation obligations require a positive candidate PASS on the full snapshot');
   requireThat(subject === 'candidate' || subject === 'base' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(subject), 'Invalid obligation subject');
   requireThat((expect === 'PASS' && witness === null) || (expect === 'FAIL' && text(witness)), 'Invalid expected verdict');
   requireThat(safePath(oracle?.file) && oracle.file.endsWith('.json') &&

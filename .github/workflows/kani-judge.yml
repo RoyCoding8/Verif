@@ -5,12 +5,22 @@ on:
     paths:
       - '.github/workflows/kani-judge.yml'
       - 'src/kani-judge.mjs'
+      - 'src/contracts.mjs'
+      - 'src/git.mjs'
+      - 'src/planner.mjs'
+      - 'src/verify.mjs'
+      - 'src/verity.mjs'
       - 'test/kani-judge.test.mjs'
       - 'verification/kani/**'
   push:
     paths:
       - '.github/workflows/kani-judge.yml'
       - 'src/kani-judge.mjs'
+      - 'src/contracts.mjs'
+      - 'src/git.mjs'
+      - 'src/planner.mjs'
+      - 'src/verify.mjs'
+      - 'src/verity.mjs'
       - 'test/kani-judge.test.mjs'
       - 'verification/kani/**'
   workflow_dispatch:
