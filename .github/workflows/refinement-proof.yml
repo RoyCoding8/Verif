@@ -37,8 +37,10 @@ jobs:
           command -v bwrap
           bwrap --ro-bind / / --unshare-user --unshare-net --die-with-parent /usr/bin/true
           lake --version
-      - name: Replay the shared Lean contract and finite witness
-        run: lake check
+      - name: Build and replay the shared Lean contract and finite witness
+        run: |
+          lake build --wfail
+          lake check
         working-directory: verification/lean-refinement
       - name: Check the refinement declarations for axiom dependencies
         run: |
