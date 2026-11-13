@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { digest } from './contracts.mjs';
 
 const fields = ['id', 'attempt', 'contract', 'policy', 'ref', 'old', 'next'];
 
@@ -31,6 +32,15 @@ function canonicalJson(value) {
     throw new TypeError('receipt must serialize to a JSON object');
   }
   return json;
+}
+
+function evidenceFromRow(key, row) {
+  try {
+    const value = JSON.parse(row.payload);
+    return canonicalJsonValue(value, 'evidence') === row.payload && digest({ key, value }) === row.payload_digest ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 function taskFromRow(row) {
@@ -103,6 +113,11 @@ export class Journal {
       );
       CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY
+      );
+      CREATE TABLE IF NOT EXISTS evidence_reuse (
+        run_key TEXT PRIMARY KEY CHECK (length(run_key) = 64),
+        payload TEXT NOT NULL,
+        payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64)
       );
       CREATE TABLE IF NOT EXISTS run_tasks (
         run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -409,6 +424,32 @@ export class Journal {
     }
     return this.#db.prepare('SELECT * FROM run_tasks WHERE run_id = ? ORDER BY task_id')
       .all(id).map(taskFromRow);
+  }
+
+  reusableEvidence(key) {
+    key = requireString(key, 'run key');
+    if (!/^[a-f0-9]{64}$/.test(key)) throw new TypeError('run key must be a SHA-256 digest');
+    const row = this.#db.prepare('SELECT payload, payload_digest FROM evidence_reuse WHERE run_key = ?').get(key);
+    return row ? evidenceFromRow(key, row) : null;
+  }
+
+  rememberEvidence(key, value) {
+    key = requireString(key, 'run key');
+    if (!/^[a-f0-9]{64}$/.test(key)) throw new TypeError('run key must be a SHA-256 digest');
+    const payload = canonicalJson(value);
+    const payloadDigest = digest({ key, value: JSON.parse(payload) });
+    this.#transaction(() => {
+      const existing = this.#db.prepare('SELECT payload, payload_digest FROM evidence_reuse WHERE run_key = ?').get(key);
+      if (!existing) {
+        this.#db.prepare('INSERT INTO evidence_reuse (run_key, payload, payload_digest) VALUES (?, ?, ?)')
+          .run(key, payload, payloadDigest);
+      } else if (evidenceFromRow(key, existing) === null) {
+        this.#db.prepare('UPDATE evidence_reuse SET payload = ?, payload_digest = ? WHERE run_key = ?')
+          .run(payload, payloadDigest, key);
+      }
+    });
+    const stored = this.reusableEvidence(key);
+    return stored !== null && digest({ key, value: stored }) === payloadDigest;
   }
 
   startTask(run, id) {
