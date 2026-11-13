@@ -104,7 +104,10 @@ def Safe (state : State) : Prop :=
 
 theorem initialSafe (operation oldHead candidate authority : Nat) :
     Safe (initial operation oldHead candidate authority) := by
-  simp [Safe, initial]
+  constructor
+  · exact Nat.zero_le 1
+  · intro record present
+    cases present
 
 theorem stepSafe (state : State) (action : Action) (safe : Safe state) :
     Safe (step state action) := by

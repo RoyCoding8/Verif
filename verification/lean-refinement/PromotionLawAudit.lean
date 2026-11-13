@@ -1,7 +1,10 @@
 import PromotionLaw
 
+#print axioms VerityPromotion.initialSafe
+#print axioms VerityPromotion.stepSafe
 #print axioms VerityPromotion.executeSafe
 #print axioms VerityPromotion.executeAtMostOneWrite
+#print axioms VerityPromotion.stepPreservesWrite
 #print axioms VerityPromotion.executePreservesWrites
 #print axioms VerityPromotion.matchingFencesWrite
 #print axioms VerityPromotion.movedHeadRejects
