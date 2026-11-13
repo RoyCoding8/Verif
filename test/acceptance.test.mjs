@@ -3,6 +3,7 @@ import { setTimeout } from 'node:timers/promises';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { approve, createDemo, fixtureWorker } from '../examples/setup.mjs';
 import { assertExhaustiveDomain, hash, planVerification } from '../src/contracts.mjs';
 import { GitRepo } from '../src/git.mjs';
@@ -481,6 +482,47 @@ test('recovers a real Git ref update interrupted before the journal commit, even
   const [result] = await runTasks({ ...settings, worker: async () => assert.fail('Recovery dispatched the worker again') });
   assert.equal(result.commit, prepared.next);
   assert.equal(result.operation, prepared.id);
+});
+
+test('recovery refuses a prepared commit with an unchanged tree and a different receipt trailer', async t => {
+  const fixtureSettings = await fixture(t);
+  const task = fixtureSettings.tasks[1];
+  const settings = { ...fixtureSettings, tasks: [task], worker: fixtureWorker };
+  const repo = new GitRepo(settings.repository);
+  const head = repo.readRef(task.policy.ref);
+  const updateRef = GitRepo.prototype.updateRef;
+  GitRepo.prototype.updateRef = () => { throw new Error('Injected interruption before Git ref update'); };
+  try {
+    await assert.rejects(runTasks(settings), /Prepared operation requires recovery/);
+  } finally {
+    GitRepo.prototype.updateRef = updateRef;
+  }
+  const journal = new Journal(settings.journalPath);
+  let prepared;
+  try {
+    prepared = journal.getPending(task.policy.ref);
+  } finally {
+    journal.close();
+  }
+  assert.equal(prepared.status, 'prepared');
+  const wrong = repo.promotionCommit({ tree: repo.tree(prepared.next), parent: head, operation: prepared.id,
+    receipt: '0'.repeat(64) });
+  const db = new DatabaseSync(settings.journalPath);
+  try {
+    db.prepare('UPDATE operations SET next = ? WHERE id = ?').run(wrong, prepared.id);
+  } finally {
+    db.close();
+  }
+  assert.throws(() => recoverOperation({ ...settings, operation: prepared.id }), /does not bind the prepared receipt/);
+  assert.equal(repo.readRef(task.policy.ref), head);
+  const repair = new DatabaseSync(settings.journalPath);
+  try {
+    repair.prepare('UPDATE operations SET next = ? WHERE id = ?').run(prepared.next, prepared.id);
+  } finally {
+    repair.close();
+  }
+  assert.equal(recoverOperation({ ...settings, operation: prepared.id }).status, 'promoted');
+  assert.equal(repo.readRef(task.policy.ref), prepared.next);
 });
 
 test('revoking a running approval refuses the candidate and future dispatches', async t => {

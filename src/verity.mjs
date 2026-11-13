@@ -3,7 +3,7 @@ import { realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { approvedTask, digest, requireThat, within } from './contracts.mjs';
-import { GitRepo } from './git.mjs';
+import { GitRepo, promotionCommitMessage } from './git.mjs';
 import { Journal } from './journal.mjs';
 import { selectModelRoute } from './model-route.mjs';
 import { runPiWorker } from './pi-worker.mjs';
@@ -83,12 +83,17 @@ function applyPrepared(journal, repo, id, signal) {
       signal?.throwIfAborted();
       const { task, evidence, base, original, candidate, deadline, prerequisites } = op.receipt;
       if (task.contract.policy.ref !== op.ref) throw new Refusal('Promotion ref differs from approved policy');
+      const next = repo.commitObject(op.next);
+      if (next.parents.length !== 1 || next.parents[0] !== op.old ||
+        next.message !== promotionCommitMessage(op.id, digest(op.receipt))) {
+        throw new Refusal('Promotion commit does not bind the prepared receipt and expected parent');
+      }
       requirePrerequisites(repo, op.old, prerequisites);
       if (task.contract.revertOperation) rollbackTarget(repo, journal, op.receipt.repository, task.contract, op.old);
       const changedPaths = repo.changedPaths(op.old, op.next);
       const originalPaths = repo.changedPaths(base, original);
       if (digest(changedPaths) !== digest(originalPaths)) throw new Refusal('Integration changed the approved path set');
-      if (repo.tree(candidate) !== repo.tree(op.next)) throw new Refusal('Promotion tree differs from the checked tree');
+      if (repo.tree(candidate) !== next.tree) throw new Refusal('Promotion tree differs from the checked tree');
       const subjects = new Set(task.plan.obligations.map(o => subjectFor(o, base, candidate)));
       const manifests = new Map([...subjects].map(subject => [subject, repo.manifest(subject === candidate ? op.next : subject)]));
       let proofDependencies;
@@ -236,6 +241,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
     journal.registerAttempt({ id: attempt, contract: task.approval, policy, runId, taskId: contract.id, claim });
     let temporary;
     let checking = false;
+    let recoveryPending = false;
     try {
       const route = contract.policy.modelRoute && selectModelRoute(contract.policy.modelRoute, journal.attemptNumber(attempt));
       onEvent?.({ type: 'attempt_started', runId, task: contract.id, attempt, ...(route ? { route } : {}) });
@@ -282,10 +288,11 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
       const candidate = repo.capture(workspace, base);
       return await integrate(context, task, claim, attempt, base, candidate, deadline, signal, prerequisites);
     } catch (error) {
-      if (round === repairs || signal.aborted || error instanceof RecoveryRequired || !journal.authority(attempt)?.active) throw error;
+      recoveryPending = error instanceof RecoveryRequired;
+      if (round === repairs || signal.aborted || recoveryPending || !journal.authority(attempt)?.active) throw error;
       diagnosis = '\nPrevious attempt was refused. Use the task goal and any approved feedback checks to revise your approach.';
     } finally {
-      journal.invalidate(attempt);
+      if (!recoveryPending) journal.invalidate(attempt);
       if (temporary) await rm(temporary, { recursive: true, force: true });
     }
   }
