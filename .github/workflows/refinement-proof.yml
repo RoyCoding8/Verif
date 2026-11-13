@@ -50,6 +50,6 @@ jobs:
           done
         working-directory: verification/lean-refinement
       - name: Check generated witnesses with the pinned Lake Comparator
-        run: node --test test/refinement-proof.test.mjs test/refinement-cli.test.mjs
+        run: node --test test/refinement-proof.test.mjs test/refinement-cli.test.mjs test/semantic-delegation.test.mjs
         env:
           VERITY_LEAN_SMOKE: "1"

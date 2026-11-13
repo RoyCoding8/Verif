@@ -32,6 +32,16 @@ function leanName(value) {
   return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(value);
 }
 
+function leanClaim(binding) {
+  requireThat(binding && safePath(binding.source) && binding.source.endsWith('.lean') &&
+    /^[a-f0-9]{64}$/.test(binding.definitionDigest) && text(binding.obligation) &&
+    ['domain', 'precondition', 'guarantee', 'implementation'].every(field => leanName(binding[field])) &&
+    Array.isArray(binding.assumptions) && binding.assumptions.every(label => text(label) && label === label.normalize('NFC').trim()) &&
+    new Set(binding.assumptions).size === binding.assumptions.length, 'Invalid refinable Lean claim');
+  const { source, definitionDigest, domain, precondition, guarantee, implementation, obligation } = binding;
+  return { source, definitionDigest, domain, precondition, guarantee, implementation, obligation, assumptions: [...binding.assumptions].sort() };
+}
+
 export function parseLeanOracle(oracle) {
   requireThat(leanName(oracle?.theorem) && safePath(oracle.solution) && oracle.solution.endsWith('.lean') &&
     text(oracle.challenge) && oracle.challenge.isWellFormed(), 'Lean oracle needs a theorem name, solution path, and challenge source');
@@ -166,10 +176,16 @@ export function planVerification(intent) {
     requireThat(text(claim.statement) && levels.has(claim.required), 'Invalid claim ' + claim.id);
     const dependencies = claim.dependencies ?? [];
     requireThat(Array.isArray(dependencies) && dependencies.every(link => text(link?.claim) && text(link.statement)), 'Invalid claim dependencies');
-    return { id: claim.id, statement: claim.statement, required: claim.required, domain: normalizeDomain(claim.domain), dependencies };
+    return { id: claim.id, statement: claim.statement, required: claim.required, domain: normalizeDomain(claim.domain), dependencies,
+      ...(Object.hasOwn(claim, 'lean') ? { lean: leanClaim(claim.lean) } : {}) };
   });
   const indexedClaims = index(claims, 'claim');
   const obligations = [...index(intent.obligations, 'obligation').values()].map(o => normalizeObligation(o, indexedClaims));
+  for (const claim of claims.filter(item => item.lean)) {
+    requireThat(claim.required === 'formal' && obligations.some(o => o.id === claim.lean.obligation && o.claim === claim.id &&
+      o.method === 'lean-comparator' && o.subject === 'candidate' && !o.proofDependencies),
+    'Refinable Lean claim requires its named candidate proof obligation');
+  }
   const criteria = [...index(intent.criteria, 'criterion').values()].map(criterion => {
     requireThat(text(criterion.description) && Array.isArray(criterion.claims) && criterion.claims.length > 0 &&
       criterion.claims.every(id => indexedClaims.has(id)), 'Invalid coverage for criterion ' + criterion.id);

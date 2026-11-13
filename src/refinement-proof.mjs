@@ -134,12 +134,20 @@ export function refinementContractDigest(contract) {
 }
 
 export function buildRefinementChallenge(request) {
-  assertRecord(request, ['contract', 'trustedDefinitions'], 'challenge request');
-  const { contract, trustedDefinitions } = request;
+  assertRecord(request, ['contract', 'trustedDefinitions'], 'challenge request', ['binding']);
+  const { contract, trustedDefinitions, binding } = request;
   const normalized = normalizeContract(contract);
   const definitionDigest = assertTrustedDefinitions(trustedDefinitions, normalized.definitionDigest);
   const contractDigest = refinementContractDigest(normalized);
-  const namespace = 'VerityRefinementWitness_c' + contractDigest;
+  let witnessDigest = contractDigest;
+  if (binding !== undefined) {
+    assertRecord(binding, ['predecessorApproval', 'successorApproval', 'claim'], 'witness binding');
+    const predecessor = digest(binding.predecessorApproval, 'predecessorApproval');
+    const successor = digest(binding.successorApproval, 'successorApproval');
+    if (typeof binding.claim !== 'string' || !binding.claim.trim()) throw new TypeError('Invalid witness claim');
+    witnessDigest = digestText(JSON.stringify([contractDigest, predecessor, successor, binding.claim]));
+  }
+  const namespace = 'VerityRefinementWitness_c' + witnessDigest;
   if (trustedDefinitions.includes(namespace)) {
     throw new TypeError('trustedDefinitions may not declare the generated witness namespace');
   }
@@ -162,6 +170,7 @@ export function buildRefinementChallenge(request) {
     challenge,
     theorem,
     contractDigest,
+    witnessDigest,
     definitionDigest,
     contract: normalized,
   });
@@ -170,9 +179,9 @@ export function buildRefinementChallenge(request) {
 export async function verifyRefinement(request) {
   assertRecord(request,
     ['contract', 'approvedDigest', 'trustedDefinitions', 'solution', 'timeoutMs', 'scratch'],
-    'request', ['signal']);
-  const { contract, approvedDigest, trustedDefinitions, solution, timeoutMs, signal, scratch } = request;
-  const built = buildRefinementChallenge({ contract, trustedDefinitions });
+    'request', ['signal', 'binding']);
+  const { contract, approvedDigest, trustedDefinitions, solution, timeoutMs, signal, scratch, binding } = request;
+  const built = buildRefinementChallenge({ contract, trustedDefinitions, binding });
   if (digest(approvedDigest, 'approvedDigest') !== built.contractDigest) {
     throw new TypeError('approvedDigest does not match the normalized refinement contract');
   }
@@ -187,6 +196,7 @@ export async function verifyRefinement(request) {
   return Object.freeze({
     ...judgment,
     contractDigest: built.contractDigest,
+    witnessDigest: built.witnessDigest,
     definitionDigest: built.definitionDigest,
     theorem: built.theorem,
   });
