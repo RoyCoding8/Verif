@@ -321,6 +321,41 @@ test('requeues only running tasks as an explicit transition', () => {
   }
 });
 
+test('attempt reservations are shared across connections and survive requeue and restart', () => {
+  const { path, cleanup } = fixture();
+  const first = new Journal(path);
+  const second = new Journal(path);
+  try {
+    const task = { id: 'a', approval: 'approved', maxAttempts: 2 };
+    const runId = 'budget';
+    first.registerRun(runId, [task]);
+    assert.throws(() => second.registerRun(runId, [{ ...task, maxAttempts: 3 }]), /different task set/);
+    const claim = first.startTask(runId, task.id).claim;
+    const request = { id: 'one', contract: task.approval, policy: 'policy', runId, taskId: task.id, claim };
+    assert.deepEqual(first.registerAttempt(request), second.registerAttempt(request));
+    assert.throws(() => second.registerAttempt({ ...request, id: 'two' }), /already has an active attempt/);
+    second.requeueTask(runId, task.id);
+    const successor = second.startTask(runId, task.id).claim;
+    assert.equal(first.authority('one').active, false);
+    assert.throws(() => first.registerAttempt({ ...request, id: 'stale' }), /does not authorize/);
+    second.registerAttempt({ ...request, id: 'two', claim: successor });
+    second.requeueTask(runId, task.id);
+    const reopened = new Journal(path);
+    try {
+      reopened.registerRun(runId, [task]);
+      const recovered = reopened.startTask(runId, task.id).claim;
+      assert.throws(() => reopened.registerAttempt({ ...request, id: 'three', claim: recovered }), /attempt budget exhausted/);
+      assert.equal(reopened.authority('two').active, false);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    second.close();
+    first.close();
+    cleanup();
+  }
+});
+
 test('finds the latest promoted operation recorded for a run task', () => {
   const { path, cleanup } = fixture();
   try {

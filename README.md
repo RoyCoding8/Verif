@@ -32,7 +32,7 @@ Set `policy.feedbackChecks` to the obligation IDs the worker may run while const
 
 Use `node src/cli.mjs refinement manifest.json witness-request.json` on Linux to check a Lean witness for a principal-approved refinement contract. The manifest's `refinements` list supplies `id`, `source` relative to `oracles`, `contract`, `approvedDigest`, and `timeoutMs`. The witness request supplies the matching `id` and the candidate Lean module as `solution`. The command returns a checked witness and its binding digests. Approval of a task revision still goes through `delegate` or the principal.
 
-Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it.
+Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it. The initial attempt plus `policy.maxRepairs` is the total attempt allowance. Requeue keeps the original deadline and charges any attempt already reserved.
 
 ## Evidence and operating scope
 
@@ -41,6 +41,8 @@ The `node-test` and `finite-domain` JSON oracles list case IDs, module paths, ex
 The tested route reports observed cases. The bounded route requires exactly one case for every input tuple in the approved finite domain. A human reviews whether the domain and expected values capture the intended claim. The TLA+ model checks a finite promotion protocol and includes an unfenced configuration that must produce an unauthorized-update counterexample.
 
 Set `policy.reuseEvidence` to `true` only for deterministic Node and finite-domain checks. Verity can reuse raw observations for the same commit, tree, approved oracle, and execution environment. It rebuilds verdicts and artifacts for the current plan and checks current authorization before promotion. See [the reuse contract](verification/EvidenceReuse.md) for the full key and reproduction steps.
+
+For a Node obligation whose inputs are known, set `inputPaths` to the exact files it needs, including imports, package metadata and fixtures. Verity materializes those files for the check. With reuse enabled, an unrelated commit can reuse observations if the approved inputs, tool and oracle match. The promotion receipt still names the current candidate.
 
 ### Check a Lean proof
 

@@ -126,6 +126,7 @@ export class Journal {
         status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'blocked', 'promoted', 'refused')),
         claim INTEGER NOT NULL DEFAULT 0 CHECK (claim >= 0),
         started_ms INTEGER,
+        max_attempts INTEGER CHECK (max_attempts > 0),
         result TEXT,
         result_set INTEGER NOT NULL CHECK (result_set IN (0, 1)),
         PRIMARY KEY (run_id, task_id),
@@ -136,11 +137,15 @@ export class Journal {
     if (!attemptColumns.has('run_id')) this.#db.exec('ALTER TABLE attempts ADD COLUMN run_id TEXT REFERENCES runs(id)');
     if (!attemptColumns.has('task_id')) this.#db.exec('ALTER TABLE attempts ADD COLUMN task_id TEXT');
     if (!attemptColumns.has('claim')) this.#db.exec('ALTER TABLE attempts ADD COLUMN claim INTEGER');
+    this.#db.exec('CREATE INDEX IF NOT EXISTS attempts_by_task ON attempts (run_id, task_id)');
     const taskColumns = new Set(this.#db.prepare('PRAGMA table_info(run_tasks)').all().map(column => column.name));
     if (!taskColumns.has('claim')) {
       this.#db.exec('ALTER TABLE run_tasks ADD COLUMN claim INTEGER NOT NULL DEFAULT 0 CHECK (claim >= 0)');
     }
     if (!taskColumns.has('started_ms')) this.#db.exec('ALTER TABLE run_tasks ADD COLUMN started_ms INTEGER');
+    if (!taskColumns.has('max_attempts')) {
+      this.#db.exec('ALTER TABLE run_tasks ADD COLUMN max_attempts INTEGER CHECK (max_attempts > 0)');
+    }
     const schema = this.#db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'operations'").get();
     if (!schema.sql.includes("'abandoned'")) {
       this.#db.exec(`
@@ -210,11 +215,19 @@ export class Journal {
         return this.authority(id);
       }
       if (bound) {
-        const task = this.#db.prepare('SELECT status, claim, approval FROM run_tasks WHERE run_id = ? AND task_id = ?')
+        const task = this.#db.prepare('SELECT status, claim, approval, max_attempts FROM run_tasks WHERE run_id = ? AND task_id = ?')
           .get(runId, taskId);
         if (!task || task.status !== 'running' || task.claim !== claim ||
             task.approval !== canonicalJsonValue(contract, 'contract')) {
           throw new Error(`task ${taskId} in run ${runId} does not authorize contract ${contract} at claim ${claim}`);
+        }
+        if (task.max_attempts !== null) {
+          const { spent, active } = this.#db.prepare(`
+            SELECT COUNT(*) AS spent, COUNT(CASE WHEN active = 1 AND claim = ? THEN 1 END) AS active
+            FROM attempts WHERE run_id = ? AND task_id = ?
+          `).get(claim, runId, taskId);
+          if (active) throw new Error(`task ${taskId} already has an active attempt`);
+          if (spent >= task.max_attempts) throw new Error(`Task attempt budget exhausted for ${taskId}`);
         }
       }
       this.#db.prepare(`
@@ -385,9 +398,14 @@ export class Journal {
       if (!task || typeof task !== 'object' || !Object.hasOwn(task, 'approval')) {
         throw new TypeError('each task must include an approval');
       }
+      const maxAttempts = task.maxAttempts ?? null;
+      if (maxAttempts !== null && (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1)) {
+        throw new TypeError('maxAttempts must be a positive safe integer');
+      }
       return {
         id: requireString(task.id, 'task id'),
         approval: canonicalJsonValue(task.approval, 'approval'),
+        maxAttempts,
       };
     });
     if (new Set(entries.map(task => task.id)).size !== entries.length) {
@@ -398,21 +416,24 @@ export class Journal {
       const existing = this.#db.prepare('SELECT id FROM runs WHERE id = ?').get(id);
       if (existing) {
         const stored = this.#db.prepare(
-          'SELECT task_id, approval FROM run_tasks WHERE run_id = ? ORDER BY task_id',
+          'SELECT task_id, approval, max_attempts FROM run_tasks WHERE run_id = ? ORDER BY task_id',
         ).all(id);
-        const approvals = new Map(stored.map(row => [row.task_id, row.approval]));
-        if (stored.length !== entries.length || entries.some(task => approvals.get(task.id) !== task.approval)) {
+        const byId = new Map(stored.map(row => [row.task_id, row]));
+        if (stored.length !== entries.length || entries.some(task => byId.get(task.id)?.approval !== task.approval ||
+          (byId.get(task.id).max_attempts !== null && byId.get(task.id).max_attempts !== task.maxAttempts))) {
           throw new Error(`run ${id} was already registered with a different task set`);
         }
+        const initialize = this.#db.prepare('UPDATE run_tasks SET max_attempts = ? WHERE run_id = ? AND task_id = ? AND max_attempts IS NULL');
+        for (const task of entries) if (task.maxAttempts !== null) initialize.run(task.maxAttempts, id, task.id);
         return this.runTasks(id);
       }
 
       this.#db.prepare('INSERT INTO runs (id) VALUES (?)').run(id);
       const insert = this.#db.prepare(`
-        INSERT INTO run_tasks (run_id, task_id, approval, status, claim, started_ms, result, result_set)
-        VALUES (?, ?, ?, 'queued', 0, NULL, NULL, 0)
+        INSERT INTO run_tasks (run_id, task_id, approval, max_attempts, status, claim, started_ms, result, result_set)
+        VALUES (?, ?, ?, ?, 'queued', 0, NULL, NULL, 0)
       `);
-      for (const task of entries) insert.run(id, task.id, task.approval);
+      for (const task of entries) insert.run(id, task.id, task.approval, task.maxAttempts);
       return this.runTasks(id);
     });
   }

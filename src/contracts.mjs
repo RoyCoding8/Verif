@@ -235,7 +235,8 @@ export function makeContract(input, plan) {
   requireThat(base === 'head-at-dispatch' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(base), 'Invalid task base');
   requireThat(typeof policy?.ref === 'string' && policy.ref.startsWith('refs/heads/'), 'Invalid protected branch');
   requireThat(Number.isSafeInteger(policy.budgetMs) && policy.budgetMs > 0 && policy.budgetMs <= 2_147_483_647, 'Invalid task budget');
-  requireThat(Number.isSafeInteger(policy.maxRepairs ?? 0) && (policy.maxRepairs ?? 0) >= 0, 'Invalid repair limit');
+  const maxRepairs = policy.maxRepairs ?? 0;
+  requireThat(Number.isSafeInteger(maxRepairs) && maxRepairs >= 0 && maxRepairs < Number.MAX_SAFE_INTEGER, 'Invalid repair limit');
   requireThat(plan.obligations.reduce((sum, o) => sum + o.timeoutMs, 0) < policy.budgetMs, 'Verification exceeds task budget');
   requireThat(scope && ['read', 'write', 'forbidden'].every(key => Array.isArray(scope[key]) && scope[key].every(safePath)),
     'Invalid contract path scope');

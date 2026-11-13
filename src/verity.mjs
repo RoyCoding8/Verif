@@ -254,7 +254,9 @@ export async function runTasks({
       const operation = journal.getPending(ref);
       requireThat(!operation, 'Recover prepared operation ' + operation?.id + ' before running tasks for ' + ref);
     }
-    journal.registerRun(runId, tasks.map(task => ({ id: task.contract.id, approval: task.approval })));
+    journal.registerRun(runId, tasks.map(({ contract, approval }) => ({
+      id: contract.id, approval, maxAttempts: 1 + (contract.policy.maxRepairs ?? 0),
+    })));
     for (const record of journal.runTasks(runId)) {
       if (record.status === 'running') {
         const op = journal.getTaskPromotion(runId, record.id);

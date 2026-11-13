@@ -73,6 +73,24 @@ test('parallel candidates integrate against current head and unlock the dependen
   assert.deepEqual(replay, results);
 });
 
+test('requeue cannot restore an attempt spent before a controller interruption', async t => {
+  const settings = await fixture(t);
+  const task = settings.tasks[0];
+  const context = { ...settings, tasks: [task] };
+  const repo = new GitRepo(settings.repository);
+  const initial = repo.readRef(task.policy.ref);
+  const result = await runTasks({ ...context, worker: async () => {
+    // Simulate a controller handoff while the first worker still holds its checkout.
+    inspectRun({ ...context, requeue: task.id });
+  } }).catch(error => error);
+  assert.match(result.message, /is not current|does not accept a claim/);
+  assert.equal(inspectRun(context).tasks[0].status, 'queued');
+  const [refused] = await runTasks({ ...context, worker: async () => assert.fail('Spent attempt was dispatched again') });
+  assert.equal(refused.status, 'refused');
+  assert.match(refused.reason, /attempt budget exhausted/);
+  assert.equal(repo.readRef(task.policy.ref), initial);
+});
+
 test('out-of-scope edit and failed oracle do not advance the protected ref', async t => {
   const settings = await fixture(t);
   const repo = new GitRepo(settings.repository);
