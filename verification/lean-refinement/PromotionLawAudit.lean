@@ -1,0 +1,13 @@
+import PromotionLaw
+
+#print axioms VerityPromotion.executeSafe
+#print axioms VerityPromotion.executeAtMostOneWrite
+#print axioms VerityPromotion.executePreservesWrites
+#print axioms VerityPromotion.matchingFencesWrite
+#print axioms VerityPromotion.movedHeadRejects
+#print axioms VerityPromotion.revokedAuthorityRejects
+#print axioms VerityPromotion.unapprovedTargetRejects
+#print axioms VerityPromotion.noOpTargetRejects
+#print axioms VerityPromotion.recoveryAfterWriteOnlyRecordsOutcome
+#print axioms VerityPromotion.successfulRecoveryTrace
+#print axioms VerityPromotion.retryAfterAppliedDoesNotWrite
