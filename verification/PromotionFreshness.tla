@@ -157,7 +157,7 @@ TypeOK ==
   /\ crashed \in BOOLEAN
   /\ Len(writeLog) <= 2
   /\ \A i \in 1..Len(writeLog):
-       writeLog[i] \in Heads \X Epochs \X Heads \X Epochs \X Tasks \X BOOLEAN \X 1..2
+       writeLog[i] \in Heads \X Epochs \X Heads \X Epochs \X Tasks \X BOOLEAN \X (1..2)
 
 OnePreparedOwner ==
   opState = "prepared" => opOwner \in Tasks
