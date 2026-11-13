@@ -17,13 +17,22 @@ async function fixture(t) {
 
 test('rejects invalid theorem names before the platform or toolchain check', async t => {
   const scratch = await fixture(t);
-  await assert.rejects(judgeLean({
-    challenge,
-    solution: correctSolution,
-    theorem: 'target; lake comparator',
-    timeoutMs: 1000,
-    scratch,
-  }), { name: 'TypeError', message: /simple qualified Lean identifier/ });
+  const options = { challenge, solution: correctSolution, timeoutMs: 1000, scratch };
+  await assert.rejects(judgeLean({ ...options, theorem: 'target; lake comparator' }), {
+    name: 'TypeError', message: /simple qualified Lean identifier/,
+  });
+  await assert.rejects(judgeLean({ ...options, theorems: [] }), {
+    name: 'TypeError', message: /nonempty list/,
+  });
+  await assert.rejects(judgeLean({ ...options, theorems: ['target', 'bad; name'] }), {
+    name: 'TypeError', message: /nonempty list/,
+  });
+  await assert.rejects(judgeLean({ ...options, theorem: 'target', theorems: ['target'] }), {
+    name: 'TypeError', message: /exactly one/,
+  });
+  await assert.rejects(judgeLean(options), {
+    name: 'TypeError', message: /exactly one/,
+  });
 });
 
 test('keeps the trusted challenge and candidate in separate projects and fails closed on tool errors', {
@@ -64,6 +73,7 @@ if [ "$command" = "comparator" ]; then
   test ! -f Challenge.lean
   grep -F '"theorem_names"' comparator.json >/dev/null
   grep -F '"Namespace.target"' comparator.json >/dev/null
+  if [ -e "$bin/require-second" ]; then grep -F '"Namespace.second"' comparator.json >/dev/null; fi
   grep -F '"permitted_axioms"' comparator.json >/dev/null
   export_path=""
   for arg do
@@ -117,6 +127,17 @@ exit 77
       stdout: 'accepted\n',
       stderr: 'comparator diagnostics\n',
     });
+
+    await writeFile(join(bin, 'exit'), '0');
+    await writeFile(join(bin, 'require-second'), '');
+    const linkedAccepted = await judgeLean({
+      challenge,
+      solution: correctSolution,
+      theorems: ['Namespace.target', 'Namespace.second'],
+      timeoutMs: 10000,
+      scratch: root,
+    });
+    assert.equal(linkedAccepted.accepted, true);
 
     await writeFile(join(bin, 'exit'), '1');
     const rejected = await judgeLean({
@@ -195,4 +216,58 @@ test('Lake Comparator accepts a matching theorem and rejects an axiom, weaker st
   const missingRejected = await judgeLean({ ...options, challenge, solution: missing });
   assert.equal(missingRejected.accepted, false, missingRejected.stderr + missingRejected.stdout);
   assert.match(missingRejected.stderr + missingRejected.stdout, /Const not found in solution: 'target'|Constant target not found in environment/);
+});
+
+test('Lake Comparator checks every requested theorem in a linked proof chain', {
+  skip: process.env.VERITY_LEAN_SMOKE !== '1',
+}, async t => {
+  const scratch = await fixture(t);
+  const options = { theorems: ['foundation', 'corollary'], timeoutMs: 180000, scratch };
+  const linkedChallenge = [
+    'theorem foundation : ∀ n : Nat, n = n := by sorry',
+    'theorem corollary : ∀ n : Nat, n = n := by sorry',
+  ].join('\n');
+  const linkedSolution = [
+    'theorem foundation : ∀ n : Nat, n = n := by',
+    '  intro n',
+    '  rfl',
+    'theorem corollary : ∀ n : Nat, n = n := foundation',
+  ].join('\n');
+  const accepted = await judgeLean({ ...options, challenge: linkedChallenge, solution: linkedSolution });
+  assert.equal(accepted.accepted, true, accepted.stderr + accepted.stdout);
+
+  const weakenedFoundation = [
+    'theorem foundation : True := True.intro',
+    'theorem corollary : ∀ n : Nat, n = n := by',
+    '  intro n',
+    '  rfl',
+  ].join('\n');
+  const weakenedRejected = await judgeLean({
+    ...options, challenge: linkedChallenge, solution: weakenedFoundation,
+  });
+  assert.equal(weakenedRejected.accepted, false);
+  assert.match(weakenedRejected.stderr + weakenedRejected.stdout, /theorem statement do not match/);
+
+  const missingFoundation = [
+    'theorem corollary : ∀ n : Nat, n = n := by',
+    '  intro n',
+    '  rfl',
+  ].join('\n');
+  const missingRejected = await judgeLean({
+    ...options, challenge: linkedChallenge, solution: missingFoundation,
+  });
+  assert.equal(missingRejected.accepted, false);
+  assert.match(missingRejected.stderr + missingRejected.stdout, /Const not found in solution: 'foundation'|Constant foundation not found in environment/);
+
+  const axiomSolution = [
+    'axiom injected : ∀ n : Nat, n = n',
+    'theorem bad_helper : ∀ n : Nat, n = n := injected',
+    'theorem foundation : ∀ n : Nat, n = n := by',
+    '  intro n',
+    '  rfl',
+    'theorem corollary : ∀ n : Nat, n = n := bad_helper',
+  ].join('\n');
+  const axiomRejected = await judgeLean({ ...options, challenge: linkedChallenge, solution: axiomSolution });
+  assert.equal(axiomRejected.accepted, false);
+  assert.match(axiomRejected.stderr + axiomRejected.stdout, /Illegal axiom detected: 'injected'/);
 });
