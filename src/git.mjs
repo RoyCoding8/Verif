@@ -224,8 +224,7 @@ export class GitRepo {
 
   commitObject(commit) {
     oid(commit, 'commit id');
-    run(this.#root, ['--no-replace-objects', 'cat-file', '-e', `${commit}^{commit}`]);
-    const canonical = run(this.#root, ['--no-replace-objects', 'rev-parse', '--verify', `${commit}^{commit}`]).trim();
+    const canonical = run(this.#root, ['--no-replace-objects', 'rev-parse', '--verify', '--end-of-options', `${commit}^{commit}`]).trim();
     if (canonical !== commit) throw new Error('Commit id must be full and canonical');
     const raw = run(this.#root, ['--no-replace-objects', 'cat-file', 'commit', commit], undefined, {}, true);
     const split = raw.indexOf(Buffer.from('\n\n'));
@@ -240,7 +239,6 @@ export class GitRepo {
     }
     const tree = trees[0];
     run(this.#root, ['--no-replace-objects', 'cat-file', '-e', `${tree}^{tree}`]);
-    for (const parent of parents) run(this.#root, ['--no-replace-objects', 'cat-file', '-e', `${parent}^{commit}`]);
     return { commit, tree, parents, message };
   }
 

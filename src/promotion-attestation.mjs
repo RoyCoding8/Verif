@@ -9,12 +9,6 @@ const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const OPERATION = /^[^\r\n\0]+$/;
 
-function json(value) {
-  const encoded = JSON.stringify(value);
-  requireThat(encoded !== undefined, 'Attestation value must be JSON serializable');
-  return encoded;
-}
-
 function pae(payloadType, payload) {
   const type = Buffer.from(payloadType, 'ascii');
   requireThat(type.toString('ascii') === payloadType, 'DSSE payload type must be ASCII');
@@ -22,12 +16,8 @@ function pae(payloadType, payload) {
     Buffer.from(` ${payload.length} `, 'ascii'), payload]);
 }
 
-function publicKeyOf(key) {
-  return createPublicKey(key);
-}
-
 function keyId(key) {
-  const publicKey = key.type === 'public' ? key : publicKeyOf(key);
+  const publicKey = key.type === 'public' ? key : createPublicKey(key);
   requireThat(publicKey.asymmetricKeyType === 'ed25519', 'Promotion attestation requires an Ed25519 key');
   return createHash('sha256').update(publicKey.export({ type: 'spki', format: 'der' })).digest('hex');
 }
@@ -45,8 +35,9 @@ function operationReceipt(operation) {
     typeof operation.next === 'string' && OID.test(operation.next), 'Invalid promotion commit identity');
   requireThat(contract && plan && typeof task.approval === 'string' && SHA256.test(task.approval) &&
     operation.contract === task.approval && digest(contract) === task.approval &&
-    SHA256.test(contract.plan) && digest(plan) === contract.plan,
-  'Operation contract or plan binding is invalid');
+    SHA256.test(contract.plan) && digest(plan) === contract.plan &&
+    contract.policy?.ref === operation.ref && operation.policy === digest(contract.policy),
+  'Operation contract, plan, or target policy binding is invalid');
   requireThat(evidence?.version === 1 && evidence.contract === task.approval && evidence.plan === contract.plan &&
     evidence.base === receipt.base && evidence.candidate === receipt.candidate &&
     evidence.assurance && typeof evidence.assurance === 'object' &&
@@ -96,7 +87,7 @@ export function createPromotionAttestation({ repo, operation, privateKey }) {
     predicateType: PROMOTION_PREDICATE_TYPE,
     predicate,
   };
-  const payload = Buffer.from(json(statement), 'utf8');
+  const payload = Buffer.from(JSON.stringify(statement), 'utf8');
   return {
     payloadType: PAYLOAD_TYPE,
     payload: payload.toString('base64'),
@@ -106,12 +97,12 @@ export function createPromotionAttestation({ repo, operation, privateKey }) {
 
 function decodeEnvelope(envelope) {
   requireThat(envelope && envelope.payloadType === PAYLOAD_TYPE && typeof envelope.payload === 'string' &&
-    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(envelope.payload) &&
+    envelope.payload.length <= 1_500_000 &&
     Array.isArray(envelope.signatures) && envelope.signatures.length === 1,
   'Invalid promotion DSSE envelope');
   const signature = envelope.signatures[0];
   requireThat(typeof signature?.keyid === 'string' && SHA256.test(signature.keyid) &&
-    typeof signature.sig === 'string' && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(signature.sig),
+    typeof signature.sig === 'string' && signature.sig.length <= 256,
   'Invalid promotion DSSE signature');
   return { payload: Buffer.from(envelope.payload, 'base64'), signature };
 }
@@ -120,7 +111,8 @@ function authenticatedStatement({ envelope, publicKey }) {
   requireThat(publicKey?.type === 'public' && publicKey.asymmetricKeyType === 'ed25519',
     'Promotion attestation requires an Ed25519 public key');
   const { payload, signature } = decodeEnvelope(envelope);
-  requireThat(envelope.payload === payload.toString('base64'), 'Non-canonical DSSE payload encoding');
+  requireThat(envelope.payload === payload.toString('base64') && signature.sig === Buffer.from(signature.sig, 'base64').toString('base64'),
+    'Non-canonical DSSE base64 encoding');
   requireThat(signature.keyid === keyId(publicKey), 'DSSE key ID does not match the supplied public key');
   const signatureBytes = Buffer.from(signature.sig, 'base64');
   requireThat(signature.sig === signatureBytes.toString('base64') &&

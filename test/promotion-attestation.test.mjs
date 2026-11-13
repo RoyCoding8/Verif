@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { digest } from '../src/contracts.mjs';
+import { digest, planVerification } from '../src/contracts.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { createPromotionAttestation, PROMOTION_PREDICATE_TYPE, verifyPromotionAttestation } from '../src/promotion-attestation.mjs';
 
@@ -44,7 +43,9 @@ function statement(envelope) {
 }
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'verity-attestation-'));
+  const scratch = path.resolve('tmp');
+  fs.mkdirSync(scratch, { recursive: true });
+  const root = fs.mkdtempSync(path.join(scratch, 'verity-attestation-'));
   git(root, ['init', '--quiet', '--initial-branch=main']);
   fs.writeFileSync(path.join(root, 'value.txt'), 'base');
   const base = commit(root, 'base');
@@ -52,9 +53,16 @@ function fixture() {
   const candidate = commit(root, 'candidate');
   const repo = new GitRepo(root);
   const ref = 'refs/heads/protected';
-  const plan = { version: 1,
-    criteria: [{ id: 'covered', claims: [] }, { id: 'known-exception', exception: 'private risk text', claims: [] }],
-    claims: [], obligations: [] };
+  const plan = planVerification({
+    criteria: [
+      { id: 'covered', description: 'Verify the claim', claims: ['claim'] },
+      { id: 'known-exception', description: 'Approved exception', claims: ['claim'] },
+    ],
+    claims: [{ id: 'claim', statement: 'The candidate meets the requirement', required: 'tested' }],
+    obligations: [{ id: 'check', claim: 'claim', subject: 'candidate', expect: 'PASS', witness: null,
+      oracle: { file: 'fixture.json', digest: 'a'.repeat(64) }, outputs: [], cases: ['case-1'], timeoutMs: 1 }],
+  });
+  plan.criteria[1].exception = 'private risk text';
   const contract = { version: 1, id: 'task-1', plan: digest(plan), policy: { ref } };
   const approval = digest(contract);
   const operationId = '12345678-1234-4234-8234-123456789abc';
@@ -65,7 +73,7 @@ function fixture() {
   };
   const next = repo.promotionCommit({ tree: repo.tree(candidate), parent: base, operation: operationId, receipt: digest(receipt) });
   repo.updateRef(ref, next, null, operationId);
-  const operation = { id: operationId, status: 'promoted', contract: approval, ref, old: base, next, receipt };
+  const operation = { id: operationId, status: 'promoted', contract: approval, policy: digest(contract.policy), ref, old: base, next, receipt };
   const keys = crypto.generateKeyPairSync('ed25519');
   return { root, repo, base, candidate, operation, keys };
 }
@@ -101,47 +109,52 @@ test('promotion attestation has a deterministic signed replay and rejects the fi
 
   const alteredSignature = structuredClone(envelope);
   alteredSignature.signatures[0].sig = Buffer.alloc(64).toString('base64');
-  assert.throws(() => verifyPromotionAttestation({ repo, envelope: alteredSignature, publicKey: keys.publicKey, expectedCommit: operation.next }), /signature/i);
-  assert.throws(() => verifyPromotionAttestation({ repo, envelope, publicKey: keys.publicKey, expectedCommit: candidate }), /expected commit/i);
-
   const wrongTree = statement(envelope);
   wrongTree.subject[0].digest.gitTree = '0'.repeat(wrongTree.subject[0].digest.gitTree.length);
-  assert.throws(() => verifyPromotionAttestation({ repo, envelope: resign(envelope, wrongTree, keys.privateKey),
-    publicKey: keys.publicKey, expectedCommit: operation.next }), /subject and trailers/i);
-
   const wrongCommit = statement(envelope);
   wrongCommit.subject[0].digest.gitCommit = candidate;
-  assert.throws(() => verifyPromotionAttestation({ repo, envelope: resign(envelope, wrongCommit, keys.privateKey),
-    publicKey: keys.publicKey, expectedCommit: candidate }), /subject and trailers/i);
-
   const wrongParent = statement(envelope);
   wrongParent.predicate.parentCommit = candidate;
-  assert.throws(() => verifyPromotionAttestation({ repo, envelope: resign(envelope, wrongParent, keys.privateKey),
-    publicKey: keys.publicKey, expectedCommit: operation.next }), /unique signed parent/i);
-
   const wrongReceipt = statement(envelope);
   wrongReceipt.predicate.receiptDigest = '0'.repeat(64);
-  assert.throws(() => verifyPromotionAttestation({ repo, envelope: resign(envelope, wrongReceipt, keys.privateKey),
-    publicKey: keys.publicKey, expectedCommit: operation.next }), /subject and trailers/i);
+  const twoParentCommit = git(root, ['-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit-tree',
+    repo.commitObject(operation.next).tree, '-p', base, '-p', candidate],
+  Buffer.from(`Verity promotion\n\nOperation: ${operation.id}\nReceipt: ${digest(operation.receipt)}\n`));
+  const twoParent = statement(envelope);
+  twoParent.subject[0].digest.gitCommit = twoParentCommit;
+  const signed = value => resign(envelope, value, keys.privateKey);
+  const verifyCase = (candidateEnvelope, expectedCommit = operation.next) =>
+    verifyPromotionAttestation({ repo, envelope: candidateEnvelope, publicKey: keys.publicKey, expectedCommit });
+  const verificationRefusals = [
+    { case: 'changed signature', run: () => verifyCase(alteredSignature), reason: /signature/i },
+    { case: 'substituted expected commit', run: () => verifyCase(envelope, candidate), reason: /expected commit/i },
+    { case: 'changed signed tree', run: () => verifyCase(signed(wrongTree)), reason: /subject and trailers/i },
+    { case: 'changed signed commit', run: () => verifyCase(signed(wrongCommit), candidate), reason: /subject and trailers/i },
+    { case: 'changed signed parent', run: () => verifyCase(signed(wrongParent)), reason: /unique signed parent/i },
+    { case: 'changed signed receipt digest', run: () => verifyCase(signed(wrongReceipt)), reason: /subject and trailers/i },
+    { case: 'multiple commit parents', run: () => verifyCase(signed(twoParent), twoParentCommit), reason: /unique signed parent/i },
+  ];
+  for (const refusal of verificationRefusals) assert.throws(refusal.run, refusal.reason, refusal.case);
 
   const wrongOperation = structuredClone(operation);
   wrongOperation.id = 'different-operation';
-  assert.throws(() => createPromotionAttestation({ repo, operation: wrongOperation, privateKey: keys.privateKey }), /trailers/i);
-  for (const status of ['prepared', 'abandoned']) {
-    assert.throws(() => createPromotionAttestation({ repo, operation: { ...operation, status }, privateKey: keys.privateKey }), /promoted/i);
-  }
+  const wrongRef = { ...operation, ref: 'refs/heads/other' };
+  const wrongPolicy = { ...operation, policy: '0'.repeat(64) };
   const changedReceipt = structuredClone(operation);
   changedReceipt.receipt.localPath = 'C:\\different\\workspace';
-  assert.throws(() => createPromotionAttestation({ repo, operation: changedReceipt, privateKey: keys.privateKey }), /trailers/i);
   const changedPlan = structuredClone(operation);
   changedPlan.receipt.task.plan.criteria[1].exception = 'different risk text';
-  assert.throws(() => createPromotionAttestation({ repo, operation: changedPlan, privateKey: keys.privateKey }), /plan binding/i);
-
-  const twoParentCommit = execFileSync('git', ['-C', root, 'commit-tree', repo.commitObject(operation.next).tree,
-    '-p', base, '-p', candidate], { input: Buffer.from(`Verity promotion\n\nOperation: ${operation.id}\nReceipt: ${digest(operation.receipt)}\n`), encoding: 'utf8' }).trim();
-  const twoParentStatement = statement(envelope);
-  twoParentStatement.subject[0].digest.gitCommit = twoParentCommit;
-  const twoParentEnvelope = resign(envelope, twoParentStatement, keys.privateKey);
-  assert.throws(() => verifyPromotionAttestation({ repo, envelope: twoParentEnvelope,
-    publicKey: keys.publicKey, expectedCommit: twoParentCommit }), /unique signed parent/i);
+  const signingRefusals = [
+    { case: 'changed operation trailer', operation: wrongOperation, reason: /trailers/i },
+    { case: 'changed target ref', operation: wrongRef, reason: /policy/i },
+    { case: 'changed policy digest', operation: wrongPolicy, reason: /policy/i },
+    { case: 'prepared operation', operation: { ...operation, status: 'prepared' }, reason: /promoted/i },
+    { case: 'abandoned operation', operation: { ...operation, status: 'abandoned' }, reason: /promoted/i },
+    { case: 'changed receipt digest', operation: changedReceipt, reason: /trailers/i },
+    { case: 'changed plan binding', operation: changedPlan, reason: /plan.*binding/i },
+  ];
+  for (const refusal of signingRefusals) {
+    assert.throws(() => createPromotionAttestation({ repo, operation: refusal.operation, privateKey: keys.privateKey }),
+      refusal.reason, refusal.case);
+  }
 });
