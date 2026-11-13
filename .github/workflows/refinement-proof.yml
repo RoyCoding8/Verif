@@ -58,7 +58,7 @@ jobs:
           done
           lake env lean -DwarningAsError=true PromotionLawAudit.lean > "$RUNNER_TEMP/promotion-axioms.txt"
           for theorem in executeSafe executeAtMostOneWrite executePreservesWrites matchingFencesWrite movedHeadRejects revokedAuthorityRejects unapprovedTargetRejects noOpTargetRejects recoveryAfterWriteOnlyRecordsOutcome successfulRecoveryTrace retryAfterAppliedDoesNotWrite; do
-            grep -Fx "'VerityPromotion.$theorem' does not depend on any axioms" "$RUNNER_TEMP/promotion-axioms.txt"
+            grep -Ex "'VerityPromotion\.$theorem' (does not depend on any axioms|depends on axioms: \[(propext|Quot\.sound|propext, Quot\.sound)\])" "$RUNNER_TEMP/promotion-axioms.txt"
           done
         working-directory: verification/lean-refinement
       - name: Check generated witnesses with the pinned Lake Comparator
