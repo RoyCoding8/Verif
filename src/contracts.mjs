@@ -3,7 +3,7 @@ import { normalizeModelRoute } from './model-route.mjs';
 
 const levels = new Map([['tested', 0], ['bounded', 1], ['formal', 2]]);
 const methods = new Map([['node-test', 'tested'], ['node-property', 'tested'], ['node-history', 'tested'], ['node-differential', 'tested'],
-  ['finite-domain', 'bounded'], ['lean-comparator', 'formal']]);
+  ['finite-domain', 'bounded'], ['kani', 'bounded'], ['lean-comparator', 'formal']]);
 
 export function requireThat(condition, message) {
   if (!condition) throw new Error(message);
@@ -185,6 +185,8 @@ function normalizeObligation(obligation, claims) {
     'Finite-domain obligations must list a case for every input in the declared domain');
   requireThat(method !== 'lean-comparator' || (expect === 'PASS' && cases.length === 1 && leanName(cases[0])),
     'Lean obligations require one named theorem and an expected PASS');
+  requireThat(method !== 'kani' || (cases.length === 1 && /^[a-zA-Z_][a-zA-Z_0-9]*$/.test(cases[0]) &&
+    (expect === 'PASS' || subject !== 'candidate')), 'Kani obligations need one named harness and a positive candidate verdict');
   const normalized = { id: obligation.id, claim, subject, expect, witness, method, oracle, outputs, cases, timeoutMs: obligation.timeoutMs };
   if (Object.hasOwn(obligation, 'leanModules')) {
     const { leanModules } = obligation;
@@ -201,7 +203,7 @@ function normalizeObligation(obligation, claims) {
   }
   if (Object.hasOwn(obligation, 'inputPaths')) {
     const { inputPaths } = obligation;
-    requireThat(method !== 'lean-comparator' && Array.isArray(inputPaths) && inputPaths.length > 0 &&
+    requireThat(!['lean-comparator', 'kani'].includes(method) && Array.isArray(inputPaths) && inputPaths.length > 0 &&
       inputPaths.every(safePath) && new Set(inputPaths).size === inputPaths.length,
     'Input projection requires unique file paths and a Node verification method');
     normalized.inputPaths = [...inputPaths].sort();

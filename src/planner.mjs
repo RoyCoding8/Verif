@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { parseKaniOracle } from './kani-judge.mjs';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import { digest, hash, leanModuleDigests, makeContract, parseLeanOracle, planVerification, requireThat, safePath, text } from './contracts.mjs';
@@ -37,6 +38,10 @@ async function catalogFor(root, files) {
       const oracle = parseHistoryOracle(records);
       const inputs = oracle.cases.map(({ id, module, name, args, calls }) => ({ id, module, name, args, calls }));
       return [file, { ...identity, cases: inputs.map(record => record.id), inputs, method: 'node-history' }];
+    }
+    if (records?.kind === 'kani') {
+      const { source, name } = parseKaniOracle(records);
+      return [file, { ...identity, cases: [name], inputs: { source, name }, method: 'kani' }];
     }
     const oracle = parseLeanOracle(records);
     const leanModules = leanModuleDigests(oracle.modules);
@@ -92,7 +97,7 @@ export async function proposeTask({ repository, oracleRoot, scratch, draft, work
     const obligations = proposed.obligations.map(({ oracleFile, leanModules: _proposedModules, ...fields }) => {
       const oracle = catalog.get(oracleFile);
       requireThat(oracle, 'Planner selected an unapproved oracle ' + oracleFile);
-      const special = ['lean-comparator', 'node-property', 'node-history', 'node-differential'].includes(fields.method) ? fields.method : undefined;
+      const special = ['lean-comparator', 'node-property', 'node-history', 'node-differential', 'kani'].includes(fields.method) ? fields.method : undefined;
       requireThat(oracle.method === special, 'Oracle format does not match method for ' + fields.id);
       return { ...fields, oracle: { file: oracle.file, digest: oracle.digest }, cases: oracle.cases,
         ...(oracle.leanModules?.length ? { leanModules: oracle.leanModules } : {}) };

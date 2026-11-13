@@ -8,6 +8,7 @@ import { leanClaimChallenge, readLeanDefinitions } from './lean-claim.mjs';
 import { proofSources } from './proof-dependencies.mjs';
 import { expandSampledCases, sampleGenerator } from './sampled-cases.mjs';
 import { checkHistory, parseHistoryOracle } from './history-check.mjs';
+import { classifyKaniReport, kaniHarness, kaniJudgePin, parseKaniOracle, runKani } from './kani-judge.mjs';
 
 const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
@@ -17,6 +18,7 @@ const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs',
   hash(await readFile(new URL(path, import.meta.url))))));
 const samplingAdapter = hash(await readFile(new URL('./sampled-cases.mjs', import.meta.url)));
 const historyAdapter = hash(await readFile(new URL('./history-check.mjs', import.meta.url)));
+const kaniAdapter = hash(await readFile(new URL('./kani-judge.mjs', import.meta.url)));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
   adapter: digest(await Promise.all(['./verify.mjs', './contracts.mjs', './lean-judge.mjs', './lean-claim.mjs', './proof-dependencies.mjs'].map(async path =>
     hash(await readFile(new URL(path, import.meta.url)))))) };
@@ -26,6 +28,7 @@ function environmentFor(plan) {
 }
 
 function evidenceEnvironment(obligation) {
+  if (obligation.method === 'kani') return { ...reuseEnvironment(), kaniAdapter, pin: kaniJudgePin };
   if (obligation.method === 'lean-comparator') return proofEnvironment;
   if (obligation.method === 'node-differential') return reuseEnvironment();
   if (obligation.method === 'node-property') return { ...reuseEnvironment(), samplingAdapter };
@@ -263,7 +266,11 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
   let level;
   let output;
   let statuses;
-  if (obligation.method === 'lean-comparator') {
+  if (obligation.method === 'kani') {
+    level = 'bounded';
+    statuses = [{ id: obligation.cases[0], status: raw.verdict.verdict === 'PASS' ? 'PASS' : 'FAIL' }];
+    output = { cases: statuses, verdict: raw.verdict, sourceDigest: raw.sourceDigest, harnessDigest: raw.harnessDigest };
+  } else if (obligation.method === 'lean-comparator') {
     requireThat(raw?.version === 1 && raw.method === obligation.method && typeof raw.accepted === 'boolean' &&
       typeof raw.stdout === 'string' && typeof raw.stderr === 'string' && raw.exit === (raw.accepted ? 0 : 1),
     'Invalid cached Lean observation for ' + obligation.id);
@@ -299,6 +306,8 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
     id: obligation.id, ...report, commit, manifest, level,
     keys: evidenceKeys(obligation, claim, commit, manifest, evidenceEnvironment(obligation), prepared.dependencies),
     ...(prepared.proof ? { proof: prepared.proof } : {}),
+    ...(obligation.method === 'kani' ? { kani: { oracle: prepared.oracleBytes.toString('base64'),
+      report: raw.report, sourceDigest: raw.sourceDigest, harnessDigest: raw.harnessDigest } } : {}),
     ...(prepared.sampling ? { sampling: prepared.sampling } : {}),
     ...(obligation.proofDependencies ? { proofDependencies: prepared.dependencies } : {}),
     observation: { stdout: hash(raw.stdout), stderr: hash(raw.stderr), exit: raw.exit },
@@ -326,6 +335,20 @@ async function runObligation({ repo, task, obligation, claim, base, commit, orac
     await assertMaterialization(workspace, manifest);
     const oracle = JSON.parse(bytes.toString('utf8'));
     requireThat(dependencies.length === (obligation.proofDependencies?.length ?? 0), 'Missing verified proof dependencies');
+    if (obligation.method === 'kani') {
+      const recipe = parseKaniOracle(oracle);
+      requireThat(recipe.name === obligation.cases[0], 'Kani harness does not match obligation');
+      const source = await regularFile(workspace, recipe.source);
+      const checkDeadline = Math.min(deadline, Date.now() + obligation.timeoutMs);
+      const remaining = checkDeadline - Date.now();
+      requireThat(remaining > 0, 'Kani deadline expired');
+      reserveVerification?.(remaining);
+      const raw = await runKani({ recipe, source, directory: join(temp, 'kani'), deadline: checkDeadline, signal });
+      await assertMaterialization(workspace, manifest);
+      signal?.throwIfAborted();
+      requireThat(Date.now() < checkDeadline, 'Kani deadline expired');
+      return presentEvidence(raw, { obligation, claim, commit, manifest, prepared: { oracleBytes: bytes } });
+    }
     if (obligation.method === 'node-differential') {
       return await runNodeDifferential({ repo, obligation, claim, base, candidate: commit, manifest, oracle, workspace, temp,
         signal, deadline, reserveVerification });
@@ -423,6 +446,21 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
       const manifest = restrictManifest(manifests.get(subject), obligation.inputPaths);
       const dependencies = proofDependencies?.get(obligation.id);
       let keys;
+      if (obligation.method === 'kani') {
+        const evidence = result.kani;
+        const bytes = Buffer.from(evidence.oracle, 'base64');
+        requireThat(hash(bytes) === obligation.oracle.digest, 'Stale Kani oracle');
+        const recipe = parseKaniOracle(JSON.parse(bytes.toString('utf8')));
+        const harness = kaniHarness(recipe);
+        requireThat(recipe.name === obligation.cases[0] &&
+          manifest.files.some(file => file.path === recipe.source && file.digest === evidence.sourceDigest),
+        'Stale Kani source binding');
+        const checked = classifyKaniReport(evidence.report, { expectedHarness: recipe.name,
+          expectedProbes: recipe.probes, harnessSource: harness, approvedHarnessDigest: evidence.harnessDigest,
+          exitCode: result.observation.exit });
+        requireThat(checked.verdict === 'PASS' && result.status === 'PASS' ||
+          checked.reason === 'assertion_failure' && result.status === 'FAIL', 'Kani verdict mismatch');
+      }
       if (obligation.method === 'node-differential') {
         const baselineManifest = manifests.get(base);
         requireThat(result.differential?.base === base && baselineManifest &&

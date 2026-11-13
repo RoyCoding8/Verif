@@ -1,4 +1,51 @@
-import { hash } from './contracts.mjs';
+import { execFile } from 'node:child_process';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { hash, requireThat, safePath, text } from './contracts.mjs';
+
+const execute = promisify(execFile);
+
+export function parseKaniOracle(oracle) {
+  const { kind, source, harness, name, probes } = oracle ?? {};
+  requireThat(kind === 'kani' && safePath(source) && source.endsWith('.rs') &&
+    text(harness) && typeof name === 'string' && /^[a-zA-Z_][a-zA-Z_0-9]*$/.test(name) &&
+    Array.isArray(probes) && probes.length > 0 && probes.every(text) && new Set(probes).size === probes.length,
+  'Invalid Kani oracle');
+  requireThat(!/\bstub\b|\bassume\s*\(\s*false\s*\)/.test(harness), 'Unsupported Kani harness directive');
+  return { source, harness, name, probes };
+}
+
+export function kaniHarness(recipe) {
+  return '#[path = "subject.rs"]\nmod subject;\n' + recipe.harness;
+}
+
+export async function runKani({ recipe, source, directory, deadline, signal }) {
+  requireThat(process.platform === 'linux', 'Kani verification requires Linux');
+  const body = new TextDecoder('utf-8', { fatal: true }).decode(source);
+  requireThat(/^[\t\n\r\x20-\x7e]+$/.test(body) &&
+    !/[#]|!(?!=)|\b(?:kani|mod|extern|unsafe)\b/.test(body), 'Unsupported Rust subject syntax for Kani');
+  await mkdir(directory);
+  await writeFile(join(directory, 'subject.rs'), source, { flag: 'wx' });
+  const harness = kaniHarness(recipe);
+  await writeFile(join(directory, 'harness.rs'), harness, { flag: 'wx' });
+  const timeout = deadline - Date.now();
+  requireThat(timeout > 0, 'Kani deadline expired');
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C', LC_ALL: 'C', TZ: 'UTC' };
+  const { stdout, stderr, exit } = await execute('kani', ['-Z', 'unstable-options', 'harness.rs', '--harness',
+    recipe.name, '--export-json', 'report.json'], { cwd: directory, env, timeout, signal, killSignal: 'SIGKILL' })
+    .then(result => ({ ...result, exit: 0 })).catch(error => {
+      if (error.code !== 1 || error.killed || error.signal) throw error;
+      return { stdout: error.stdout, stderr: error.stderr, exit: 1 };
+    });
+  const file = join(directory, 'report.json');
+  requireThat((await stat(file)).size <= 2 * 1024 * 1024, 'Oversized Kani report');
+  const report = JSON.parse(await readFile(file, 'utf8'));
+  const verdict = classifyKaniReport(report, { expectedHarness: recipe.name, expectedProbes: recipe.probes,
+    harnessSource: harness, approvedHarnessDigest: hash(harness), exitCode: exit });
+  requireThat(verdict.verdict !== 'ERROR', 'Kani verification error: ' + verdict.reason);
+  return { stdout, stderr, exit, verdict, report, sourceDigest: hash(source), harnessDigest: hash(harness) };
+}
 
 export const kaniJudgePin = {
   reportVersion: '1.0',

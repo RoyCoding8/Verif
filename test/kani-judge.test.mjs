@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { hash } from '../src/contracts.mjs';
 import { classifyKaniReport } from '../src/kani-judge.mjs';
+import { approve, createDemo } from '../examples/setup.mjs';
+import { GitRepo } from '../src/git.mjs';
+import { runTasks } from '../src/verity.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const leanSpec = join(root, 'verification/kani/Verdict.lean');
@@ -172,4 +176,36 @@ test('pinned Kani reports classify a pass, an assertion disproof, and a missed p
   assert.deepEqual(unreachable, { verdict: 'COUNTEREXAMPLE', reason: 'probe_unreachable' });
   assert.deepEqual(cliError, { verdict: 'ERROR', reason: 'tool_error' });
   assert.equal(existsSync(join(root, 'kani-cli-error.json')), false);
+});
+
+test('the controller only promotes a Rust snapshot that passes its approved harness', { skip: !smoke }, async t => {
+  const scratch = join(root, 'tmp');
+  await mkdir(scratch, { recursive: true });
+  const folder = await mkdtemp(join(scratch, 'kani-controller-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const fixture = await createDemo(folder);
+  const oracleRoot = join(folder, 'oracles');
+  await mkdir(oracleRoot);
+  const harness = '#[kani::proof]\nfn check_cap() { let input: u8 = kani::any(); ' +
+    'let output = subject::cap(input); assert!(output <= 10); kani::cover!(output == 10); }\n';
+  const bytes = JSON.stringify({ kind: 'kani', source: 'cap.rs', harness, name: 'check_cap',
+    probes: ['cover condition: output == 10'] });
+  await writeFile(join(oracleRoot, 'kani.json'), bytes);
+  const ref = 'refs/heads/protected';
+  const repo = new GitRepo(fixture.repository);
+  const head = repo.readRef(ref);
+  const run = (id, source) => runTasks({ ...fixture, oracleRoot, tasks: [approve({
+    id, revision: 1, goal: 'Cap the output at ten.', scope: { read: [], write: ['cap.rs'], forbidden: [] },
+    policy: { ref, budgetMs: 90_000 }, claims: [{ id: 'cap', statement: 'Output is at most ten', required: 'bounded' }],
+    criteria: [{ id: 'acceptance', description: 'Bounded cap', claims: ['cap'] }],
+    obligations: [{ id: 'kani-check', claim: 'cap', method: 'kani', subject: 'candidate', expect: 'PASS',
+      oracle: { file: 'kani.json', digest: hash(bytes) }, cases: ['check_cap'], timeoutMs: 30_000 }],
+  })], worker: ({ workspace }) => writeFile(join(workspace, 'cap.rs'), source) });
+  const [bad] = await run('bad-cap', 'pub fn cap(n: u8) -> u8 { n }\n');
+  assert.equal(bad.status, 'refused');
+  assert.equal(repo.readRef(ref), head);
+  const [good] = await run('good-cap', 'pub fn cap(n: u8) -> u8 { if n > 10 { 10 } else { n } }\n');
+  assert.equal(good.status, 'promoted', good.reason);
+  assert.equal(repo.readRef(ref), good.commit);
+  assert.equal(good.assurance.cap, 'bounded');
 });
