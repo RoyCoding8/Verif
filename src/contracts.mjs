@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { normalizeModelRoute } from './model-route.mjs';
 
 const levels = new Map([['tested', 0], ['bounded', 1], ['formal', 2]]);
 const methods = new Map([['node-test', 'tested'], ['finite-domain', 'bounded'], ['lean-comparator', 'formal']]);
@@ -291,4 +292,3 @@ export function compose(plan, results) {
   return assurance(plan, claim => weakest(plan.obligations.filter(o =>
     o.claim === claim.id && o.subject === 'candidate' && o.expect === 'PASS').map(o => byId.get(o.id).level)));
 }
-import { normalizeModelRoute } from './model-route.mjs';

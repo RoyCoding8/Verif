@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { approve, createDemo, fixtureWorker } from '../examples/setup.mjs';
-import { assertExhaustiveDomain, planVerification } from '../src/contracts.mjs';
+import { assertExhaustiveDomain, hash, planVerification } from '../src/contracts.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { Journal } from '../src/journal.mjs';
 import { proposeTask } from '../src/planner.mjs';
@@ -89,6 +89,54 @@ test('requeue cannot restore an attempt spent before a controller interruption',
   assert.equal(refused.status, 'refused');
   assert.match(refused.reason, /attempt budget exhausted/);
   assert.equal(repo.readRef(task.policy.ref), initial);
+});
+
+test('retry dispatch uses the next approved model and binds the route to approval', async t => {
+  const settings = await fixture(t);
+  const original = settings.tasks[0];
+  const modelRoute = [{ provider: 'first', model: 'a' }, { provider: 'second', model: 'b' }];
+  const task = approve({ ...original, policy: { ...original.policy, maxRepairs: 1, modelRoute } });
+  const seen = [];
+  const events = [];
+  const [result] = await runTasks({ ...settings, tasks: [task], onEvent: event => events.push(event), worker: async job => {
+    seen.push(job.route);
+    if (seen.length === 1) throw new Error('fixture refused the first model');
+    await fixtureWorker(job);
+  } });
+  assert.equal(result.status, 'promoted', JSON.stringify(result));
+  assert.deepEqual(seen, modelRoute);
+  assert.deepEqual(events.filter(event => event.type === 'attempt_started').map(event => event.route), modelRoute);
+  await assert.rejects(runTasks({ ...settings, tasks: [{ ...task, policy: { ...task.policy, modelRoute: [...modelRoute].reverse() } }] }),
+    /principal approval/);
+});
+
+test('rollback is an approved candidate with its own checks and preserves later unrelated changes', async t => {
+  const settings = await fixture(t);
+  const [reserve, messages] = settings.tasks;
+  const repo = new GitRepo(settings.repository);
+  const initial = repo.readRef(reserve.policy.ref);
+  const promoted = await runTasks({ ...settings, tasks: [reserve, messages], worker: fixtureWorker });
+  assert.deepEqual(promoted.map(result => result.status), ['promoted', 'promoted']);
+  const head = repo.readRef(reserve.policy.ref);
+  const rollback = {
+    ...reserve, id: 'rollback-message', goal: 'Restore the prior decline wording.', scope: messages.scope,
+    criteria: messages.criteria, claims: messages.claims, revertOperation: promoted[1].operation,
+  };
+  const noWorker = async () => assert.fail('Rollback dispatched a model');
+  const [refused] = await runTasks({ ...settings, worker: noWorker, tasks: [approve({ ...rollback, obligations: messages.obligations })] });
+  assert.equal(refused.status, 'refused');
+  assert.match(refused.reason, /Unexpected verdict/);
+  assert.equal(repo.readRef(reserve.policy.ref), head);
+  const oracleRoot = join(settings.scratch, 'rollback-oracles');
+  await mkdir(oracleRoot);
+  const bytes = JSON.stringify([{ id: 'restore', module: 'response.mjs', name: 'response', args: ['declined'], expected: 'declined' }]);
+  await writeFile(join(oracleRoot, 'restore.json'), bytes);
+  const task = approve({ ...rollback, claims: [{ ...messages.claims[0], statement: 'Declined reservations use the prior wording' }],
+    obligations: [{ ...messages.obligations[0], cases: ['restore'], oracle: { file: 'restore.json', digest: hash(bytes) } }] });
+  const [reverted] = await runTasks({ ...settings, oracleRoot, worker: noWorker, tasks: [task] });
+  assert.equal(reverted.status, 'promoted', JSON.stringify(reverted));
+  assert.equal(repo.readRef(reserve.policy.ref), reverted.commit);
+  assert.deepEqual(repo.changedPaths(initial, reverted.commit), ['reserve.mjs']);
 });
 
 test('out-of-scope edit and failed oracle do not advance the protected ref', async t => {
