@@ -1,0 +1,52 @@
+name: Evaluate Pi reservation changes
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Pi provider
+        type: choice
+        options: [google, openrouter]
+        required: true
+      model:
+        description: Exact Pi model ID
+        type: string
+        required: true
+      trials:
+        description: Paired trials, from 1 to 10
+        type: number
+        default: 2
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Run matched trials
+        env:
+          TRIAL_PROVIDER: ${{ inputs.provider }}
+          TRIAL_MODEL: ${{ inputs.model }}
+          TRIAL_COUNT: ${{ inputs.trials }}
+          GEMINI_API_KEY: ${{ inputs.provider == 'google' && secrets.GEMINI_API_KEY || '' }}
+          OPENROUTER_API_KEY: ${{ inputs.provider == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$TRIAL_PROVIDER" in
+            google) test -n "$GEMINI_API_KEY" || { echo 'Missing GEMINI_API_KEY'; exit 1; } ;;
+            openrouter) test -n "$OPENROUTER_API_KEY" || { echo 'Missing OPENROUTER_API_KEY'; exit 1; } ;;
+            *) exit 1 ;;
+          esac
+          node evaluation/reservation.mjs --live "$TRIAL_PROVIDER" "$TRIAL_MODEL" "$TRIAL_COUNT"
