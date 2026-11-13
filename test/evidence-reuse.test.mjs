@@ -117,8 +117,8 @@ test('approved Node projection reuses only the same executed files and checks th
   await writeFile(join(workspace, 'dependency.mjs'), 'export const value = { z: 1, a: { y: 2, b: 3 } };');
   const candidate = () => repo.capture(workspace, base);
   const attempt = beginAttempt(journal, original, 'projection');
-  const run = (task = original, attemptId = attempt) =>
-    verifyTask({ ...settings, candidate: candidate() }, task, observedJournal, attemptId);
+  const run = (task = original, attemptId = attempt, subject = candidate()) =>
+    verifyTask({ ...settings, candidate: subject }, task, observedJournal, attemptId);
   const first = await run();
   assert.deepEqual(lookedUp.splice(0), [false, false]);
   await writeFile(join(workspace, 'independent.txt'), 'unrelated');
@@ -140,7 +140,7 @@ test('approved Node projection reuses only the same executed files and checks th
   await writeFile(join(settings.oracleRoot, 'revised.json'), bytes);
   const changedOracle = probeTask({ ...settings, id: 'revised', claimId: 'projection', inputPaths: ['probe.mjs', 'dependency.mjs'],
     constantOracle: { file: 'revised.json', digest: hash(bytes) } });
-  await run(changedOracle, beginAttempt(journal, changedOracle, 'revised'));
+  await run(changedOracle, beginAttempt(journal, changedOracle, 'revised'), third.candidate);
   assert.deepEqual(lookedUp.splice(0), [true, false]);
   const omitted = probeTask({ ...settings, id: 'omitted', claimId: 'projection', inputPaths: ['probe.mjs'] });
   await assert.rejects(run(omitted, beginAttempt(journal, omitted, 'omitted')), /ERR_MODULE_NOT_FOUND/);
