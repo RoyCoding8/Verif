@@ -298,7 +298,7 @@ test('a changed policy immediately fences the prior feedback grant', async t => 
     await fixtureWorker(job);
   } });
   assert.equal(result.status, 'refused');
-  assert.match(result.reason, /does not authorize/);
+  assert.match(result.reason, /no longer authorizes verification/);
 });
 
 test('out-of-scope edit and failed oracle do not advance the protected ref', async t => {

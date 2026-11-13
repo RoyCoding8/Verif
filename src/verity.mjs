@@ -149,10 +149,12 @@ async function integrate(context, task, claim, attempt, base, original, deadline
   const { repo, repository, runId, journal, oracleRoot, scratch } = context;
   const { contract } = task;
   const { ref } = contract.policy;
+  const policy = digest(contract.policy);
   const originalPaths = repo.changedPaths(base, original);
   enforceScope(originalPaths, contract.scope);
   for (let round = 0; round < 4; round++) {
     signal.throwIfAborted();
+    requireAttemptAuthority(journal, attempt, task.approval, policy, 'verification');
     const head = repo.readRef(ref);
     requireThat(head, 'Protected ref does not exist: ' + ref);
     requirePrerequisites(repo, head, prerequisites);
@@ -173,7 +175,7 @@ async function integrate(context, task, claim, attempt, base, original, deadline
     const bundle = { repository, runId, claim, task, evidence, base, original, candidate, deadline, prerequisites };
     const next = repo.promotionCommit({ tree, parent: head, operation, receipt: digest(bundle) });
     journal.prepare({
-      id: operation, attempt, contract: task.approval, policy: digest(contract.policy),
+      id: operation, attempt, contract: task.approval, policy,
       ref, old: head, next, receipt: bundle,
     });
     try {
@@ -183,7 +185,7 @@ async function integrate(context, task, claim, attempt, base, original, deadline
       if (current === next) throw new RecoveryRequired('Promotion requires recovery for operation ' + operation, { cause: error });
       const authority = journal.authority(attempt);
       if (current !== head || signal.aborted || error instanceof Refusal ||
-        !authority?.active || authority.policy !== digest(contract.policy)) {
+        !authority?.active || authority.policy !== policy) {
         journal.abandon(operation, { readRef: name => repo.readRef(name) });
         if (current !== head && !signal.aborted) continue;
         throw error;
@@ -273,6 +275,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
         journal.recordModelUsage(attempt, report?.usage);
       }
       signal.throwIfAborted();
+      requireAttemptAuthority(journal, attempt, task.approval, policy, 'verification');
       const candidate = repo.capture(workspace, base);
       return await integrate(context, task, claim, attempt, base, candidate, deadline, signal, prerequisites);
     } catch (error) {
