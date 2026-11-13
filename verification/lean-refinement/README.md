@@ -13,6 +13,8 @@ The JavaScript verifier accepts a contract containing the SHA-256 of controller-
 
 `refinesTrans` proves that two refinements compose over an arbitrary common domain. CI runs `lake env lean -DwarningAsError=true AxiomAudit.lean` and requires all three reported theorems to be axiom-free.
 
+`DelegationLaw.lean` checks the issuance relation over frozen predecessor and successor predicates. CI audits `issueSound` and three replay rejections for successor digest, successor approval, and claim identity with `lake env lean -DwarningAsError=true DelegationLawAudit.lean`. The controller test runs the real comparator on a witness for an exact successor and rejects the same witness for a changed approval.
+
 The controller supplies the frozen definitions source separately. The verifier checks its exact UTF-8 SHA-256 against the contract before generating a fresh theorem name from the full contract digest. It builds the challenge itself and passes that challenge and the worker solution to the existing Linux Lake Comparator judge. A worker cannot supply or replace the challenge. Comparator checks the candidate against the trusted exported statement and rejects proofs that depend on axioms outside the existing allowlist.
 
 This verifies the named Lean proposition. It does not establish that the trusted definitions or predicate names accurately describe software behavior; the controller must approve those definitions and the caller must enforce any recorded assumptions.
