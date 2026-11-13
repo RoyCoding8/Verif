@@ -24,6 +24,8 @@ The manifest contains `repository`, `oracles`, `journal`, `scratch`, `maxWorkers
 
 To ask Pi for a plan, list the available oracle files in each task's `oracleFiles` and run `node src/cli.mjs propose manifest.json`. Review the returned intent before approving it.
 
+For a task whose approved policy includes `"delegation": "monotonic"`, run `node src/cli.mjs delegate manifest.json proposed-task.json` to check the next full task revision. It returns the revised task and the digests that bind it to its predecessor. Existing claims and obligations stay fixed, coverage can grow, and budgets and path permissions can tighten. The controller can install the returned task in its manifest after the check. Keep that manifest under controller ownership.
+
 Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it.
 
 ## Evidence and operating scope

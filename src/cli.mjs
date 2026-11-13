@@ -2,11 +2,12 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { digest, makeContract, planVerification, requireThat } from './contracts.mjs';
+import { reviseApprovedTask } from './delegation-policy.mjs';
 import { Journal } from './journal.mjs';
 import { proposeTask } from './planner.mjs';
 import { inspectRun, recoverOperation, runTasks } from './verity.mjs';
 
-const usage = 'Usage: verity propose <manifest> | plan <manifest> | run <manifest> | status <manifest> | requeue <manifest> <task> | receipt <manifest> <operation> | cancel <manifest> <attempt> | recover <manifest> <operation> [--abandon]';
+const usage = 'Usage: verity propose <manifest> | plan <manifest> | delegate <manifest> <proposed-task.json> | run <manifest> | status <manifest> | requeue <manifest> <task> | receipt <manifest> <operation> | cancel <manifest> <attempt> | recover <manifest> <operation> [--abandon]';
 
 async function main() {
   const [command, filename, id, option, ...rest] = process.argv.slice(2);
@@ -14,10 +15,17 @@ async function main() {
     console.log(usage);
     return;
   }
-  requireThat(filename && ['propose', 'plan', 'run', 'status', 'requeue', 'receipt', 'cancel', 'recover'].includes(command) && !rest.length, usage);
+  requireThat(filename && ['propose', 'plan', 'delegate', 'run', 'status', 'requeue', 'receipt', 'cancel', 'recover'].includes(command) && !rest.length, usage);
   requireThat(['propose', 'plan', 'run', 'status'].includes(command) ? !id : id, usage);
   requireThat(option === undefined || (command === 'recover' && option === '--abandon'), usage);
   const manifest = JSON.parse(await readFile(filename, 'utf8'));
+  if (command === 'delegate') {
+    const proposal = JSON.parse(await readFile(id, 'utf8'));
+    requireThat(Array.isArray(manifest.tasks), 'Missing approved tasks');
+    const matching = manifest.tasks.filter(task => task.id === proposal?.id);
+    requireThat(matching.length === 1, 'Expected one approved predecessor for the proposed task');
+    return reviseApprovedTask(matching[0], proposal);
+  }
   if (command === 'plan') {
     requireThat(Array.isArray(manifest.tasks) && manifest.tasks.length > 0, 'Missing tasks');
     return manifest.tasks.map(task => {
