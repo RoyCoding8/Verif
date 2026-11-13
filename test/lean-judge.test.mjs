@@ -27,6 +27,9 @@ test('rejects invalid theorem names before the platform or toolchain check', asy
   await assert.rejects(judgeLean({ ...options, theorems: ['target', 'bad; name'] }), {
     name: 'TypeError', message: /nonempty list/,
   });
+  await assert.rejects(judgeLean({ ...options, theorems: ['target', 'target'] }), {
+    name: 'TypeError', message: /distinct/,
+  });
   await assert.rejects(judgeLean({ ...options, theorem: 'target', theorems: ['target'] }), {
     name: 'TypeError', message: /exactly one/,
   });

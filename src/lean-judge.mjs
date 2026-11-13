@@ -63,8 +63,9 @@ function checkRequest({ challenge, solution, theorem, theorems, timeoutMs, signa
     ? (Array.isArray(theorems) ? [...theorems] : theorems)
     : [theorem];
   if (!Array.isArray(theoremNames) || theoremNames.length === 0 ||
-      theoremNames.some(name => typeof name !== 'string' || !theoremNamePattern.test(name))) {
-    throw new TypeError('theorem names must be simple qualified Lean identifiers in a nonempty list');
+      theoremNames.some(name => typeof name !== 'string' || !theoremNamePattern.test(name)) ||
+      new Set(theoremNames).size !== theoremNames.length) {
+    throw new TypeError('theorem names must be distinct simple qualified Lean identifiers in a nonempty list');
   }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
     throw new TypeError('timeoutMs must be a positive safe integer no greater than 2147483647');
