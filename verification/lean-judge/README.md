@@ -4,10 +4,10 @@ This is the first deductive judge in Verity. A caller supplies a complete, trust
 
 ## Contract
 
-The public function is judgeLean({ challenge, solution, theorem, timeoutMs, signal, scratch }).
+The public function is judgeLean({ challenge, solution, theorem, theorems, timeoutMs, signal, scratch }).
 
 - challenge and solution are UTF-8 Lean source strings. The trusted challenge is a full Challenge.lean; the candidate is the full Solution.lean.
-- theorem is a Lean identifier or qualified identifier matching the simple identifier rule in src/lean-judge.mjs.
+- Supply exactly one of theorem or theorems. theorem is the legacy single Lean identifier; theorems is a nonempty array of Lean identifiers. Each name matches the simple identifier rule in src/lean-judge.mjs.
 - scratch is the verifier-owned absolute directory used for isolated temporary projects.
 - The result is { accepted, stdout, stderr }. Comparator exit 0 returns accepted: true; exit 1 returns accepted: false. Comparator exit 2, an unknown exit, a version mismatch, a process-start failure, cancellation, timeout, or a trusted-challenge build/export failure throws.
 - The function never parses proof output to decide acceptance. It does not use --inadvisably-no-sandbox.
@@ -32,7 +32,7 @@ Lake documents exit 0 as accepted, exit 1 as rejected, and exit 2 as unable to r
 
 ## Assurance boundary
 
-The checked theorem declaration in Solution.lean must match the named theorem in the trusted challenge export. Comparator checks the statement, permitted axioms, and proof term with Lean's kernel and, under --paranoid, the release's bundled external checkers.
+Every requested theorem declaration in Solution.lean must match the corresponding declaration in the trusted challenge export. Comparator checks each theorem's statement, permitted axioms across its transitive dependencies, and proof term with Lean's kernel and, under --paranoid, the release's bundled external checkers. A requested theorem may use another theorem in the same candidate module as part of its proof.
 
 This result depends on the correctness and intended meaning of the approved Challenge.lean, Lean's logic, Lake Comparator's plumbing, the bubblewrap sandbox, and the platform. It does not determine whether the formal statement matches an informal requirement. Lake's reference also notes that a broken kernel shared by all enabled checkers could affect the result.
 
@@ -42,7 +42,7 @@ On Linux with Node 24, run:
 
     VERITY_LEAN_SMOKE=1 node --test test/lean-judge.test.mjs
 
-The test uses a real pinned Lake Comparator and checks one matching proof, one disallowed axiom, a weaker statement, and a missing theorem. It also checks that challenge and solution files are kept in separate projects, setup errors do not become acceptance, and credentials and tool override variables are not passed to the judge process.
+The test uses a real pinned Lake Comparator and checks a matching proof, a disallowed axiom, a weaker statement, and a missing theorem. A second fixture asks Comparator to verify a two-theorem chain where the downstream proof uses the upstream declaration; it also checks rejection when the upstream statement is weakened, when it is missing despite a matching downstream proof, and when it introduces a disallowed axiom used by the downstream proof. The tests also check that challenge and solution files are kept in separate projects, setup errors do not become acceptance, and credentials and tool override variables are not passed to the judge process.
 
 The GitHub workflow installs the official Lean release asset by its SHA-256, checks that bubblewrap can start, then runs these fixtures. It also exercises proof rejection, repair, and promotion through the controller on Node 24.
 
