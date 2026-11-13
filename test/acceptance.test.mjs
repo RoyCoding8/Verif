@@ -204,6 +204,7 @@ test('a changed policy immediately fences the prior feedback grant', async t => 
     const journal = new Journal(settings.journalPath);
     try { journal.setPolicy(attempt, 'replacement'); } finally { journal.close(); }
     await assert.rejects(job.runCheck('stock-before'), /no longer authorizes/);
+    assert.throws(() => job.reserveToolCall(), /no longer authorizes/);
     await fixtureWorker(job);
   } });
   assert.equal(result.status, 'refused');

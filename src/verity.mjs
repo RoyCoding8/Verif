@@ -187,10 +187,10 @@ function resourceReservation(journal, attempt, kind, limit) {
   return limit === undefined ? undefined : amount => journal.reserveUsage(attempt, kind, amount, limit);
 }
 
-function feedbackAuthority(journal, attempt, approval, policy) {
+function requireAttemptAuthority(journal, attempt, approval, policy, operation) {
   const authority = journal.authority(attempt);
   requireThat(authority?.active && authority.contract === approval && authority.policy === policy,
-    'Attempt no longer authorizes feedback checks');
+    'Attempt no longer authorizes ' + operation);
 }
 
 async function runTask(context, task, { claim, startedMs }, prerequisites) {
@@ -225,12 +225,15 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
       else await worker({
         workspace, goal: contract.goal + diagnosis, scope: contract.scope, signal,
         ...(route ? { route } : {}),
-        reserveToolCall: resourceReservation(journal, attempt, 'tool calls', contract.policy.maxToolCalls)?.bind(null, 1),
+        reserveToolCall: () => {
+          requireAttemptAuthority(journal, attempt, task.approval, policy, 'tool calls');
+          if (contract.policy.maxToolCalls !== undefined) journal.reserveUsage(attempt, 'tool calls', 1, contract.policy.maxToolCalls);
+        },
         approvedChecks: [...feedbackChecks],
         runCheck: feedbackChecks.length === 0 ? undefined : async (name, options) => {
           requireThat(!checking, 'A feedback check is already running');
           requireThat(feedbackChecks.includes(name), 'Unknown approved check ' + name);
-          feedbackAuthority(journal, attempt, task.approval, policy);
+          requireAttemptAuthority(journal, attempt, task.approval, policy, 'feedback checks');
           checking = true;
           try {
             const snapshot = repo.capture(workspace, base);
@@ -240,7 +243,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
               reserveVerification: resourceReservation(journal, attempt, 'verification time', contract.policy.maxVerificationMs),
               proofDependencies: resolveProofDependencies(task, runId, prerequisites, journal),
             });
-            feedbackAuthority(journal, attempt, task.approval, policy);
+            requireAttemptAuthority(journal, attempt, task.approval, policy, 'feedback checks');
             return result;
           } catch (error) {
             return 'Feedback failed: ' + error.message;
