@@ -1,5 +1,5 @@
 -------------------- MODULE PromotionFreshness --------------------
-EXTENDS Naturals, Sequences, TLC
+EXTENDS Naturals, FiniteSets, Sequences, TLC
 
 CONSTANT StaleEvidenceMutant
 ASSUME StaleEvidenceMutant \in BOOLEAN
