@@ -242,6 +242,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
         const report = await worker({
           workspace, goal: contract.goal + guidance + diagnosis, scope: contract.scope, signal,
           ...(route ? { route } : {}),
+          recordUsage: usage => journal.recordModelUsage(attempt, usage),
           reserveToolCall: () => {
             requireAttemptAuthority(journal, attempt, task.approval, policy, 'tool calls');
             if (contract.policy.maxToolCalls !== undefined) journal.reserveUsage(attempt, 'tool calls', 1, contract.policy.maxToolCalls);

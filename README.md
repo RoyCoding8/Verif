@@ -42,7 +42,7 @@ Use `status` to see persisted task outcomes. `run` prints an attempt ID when a w
 
 A principal can turn a confirmed refusal into worker guidance with `policy.lessons`. Each entry names the recorded `attempt` and `evidence`, approved `diagnosis` text, and a current positive candidate obligation as `regression`. Verity checks the historical record before dispatch and includes the approved diagnosis in the worker prompt.
 
-`status` also totals model tokens and estimated cost for attempts that returned usage. The report includes the number of such attempts. Interrupted sessions can incur charges before they report usage.
+`status` totals model tokens and estimated cost for attempts with reported usage, including failed attempts when Pi can supply their session statistics. The report includes the number of attempts with usage. An interrupted process can incur charges before it records statistics.
 
 To choose the Pi model, set `policy.modelRoute` to an ordered list of exact `{provider, model}` pairs. Each reserved attempt advances through that list and reuses its final entry when the list is exhausted. The provider needs credentials on the controller host. Route changes require a new principal approval.
 

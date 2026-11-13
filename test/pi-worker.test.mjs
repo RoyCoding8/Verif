@@ -71,8 +71,10 @@ test("an explicitly selected Pi model reports usage and refuses failed provider 
   assert.deepEqual(result.usage, { tokens, estimatedCost: 0.01 });
   assert.equal(state.options.model, model);
   assert.equal(state.options.modelRuntime, modelRuntime);
-  const failed = fakeSdk({ messages: [{ role: "assistant", stopReason: "error", errorMessage: "provider detail" }] });
-  await assert.rejects(runPiWorker({ ...request, sdk: failed.sdk }), /Pi did not complete the model request/);
+  const failed = fakeSdk({ stats: { tokens, cost: 0.01 }, messages: [{ role: "assistant", stopReason: "error", errorMessage: "provider detail" }] });
+  const reported = [];
+  await assert.rejects(runPiWorker({ ...request, sdk: failed.sdk, recordUsage: usage => reported.push(usage) }), /Pi did not complete the model request/);
+  assert.deepEqual(reported, [result.usage]);
   assert.equal(failed.state.disposed, true);
 });
 
