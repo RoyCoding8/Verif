@@ -38,16 +38,30 @@ jobs:
           test -s kani-smoke.json
           cat kani-smoke.json
       - name: Observe a property counterexample
+        id: counterexample
         run: |
           set +e
-          kani -Z unstable-options verification/kani/counterexample.rs --harness verity_counterexample --export-json kani-counterexample.json
+          kani -Z unstable-options verification/kani/smoke.rs --harness verity_counterexample --export-json kani-counterexample.json
           result=$?
           set -e
+          echo "exit-code=$result" >> "$GITHUB_OUTPUT"
+          echo "counterexample exit code: $result"
           test "$result" -ne 0
           test -s kani-counterexample.json
           cat kani-counterexample.json
       - name: Observe an unreachable probe control
         run: |
-          kani -Z unstable-options verification/kani/unreachable.rs --harness verity_unreachable --export-json kani-unreachable.json
+          kani -Z unstable-options verification/kani/smoke.rs --harness verity_unreachable --export-json kani-unreachable.json
           test -s kani-unreachable.json
           cat kani-unreachable.json
+      - name: Observe a Kani CLI error
+        id: cli-error
+        run: |
+          set +e
+          kani -Z unstable-options verification/kani/smoke.rs --export-json kani-cli-error.json --verity-invalid-option
+          result=$?
+          set -e
+          echo "exit-code=$result" >> "$GITHUB_OUTPUT"
+          echo "CLI error exit code: $result"
+          test "$result" -ne 0
+          test ! -e kani-cli-error.json
