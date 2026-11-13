@@ -1,3 +1,4 @@
 .lake/
 axioms.txt
 lean-results.json
+gate-results.json

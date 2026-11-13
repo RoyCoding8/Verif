@@ -89,7 +89,18 @@ end VerityContract
 
 open VerityContract
 
-def main : IO Unit := do
+def gateRows : List (List Bool) :=
+  (List.range 512).map (fun mask => (List.range 9).map (fun bit => mask.testBit bit))
+
+def evaluateGateRow : List Bool → Bool
+  | [authority, budget, contract, receipt, scope, composition, freshness, verdict, artifacts] =>
+    gate (some ⟨authority, budget, contract, receipt, scope, composition, freshness, verdict, artifacts⟩)
+  | _ => gate none
+
+def main (args : List String) : IO Unit := do
+  if args == ["gate"] then
+    IO.println (Json.compress (toJson (([] :: gateRows).map evaluateGateRow)))
+    return
   let source ← IO.FS.readFile "fixtures.json"
   let json ← match Json.parse source with
     | .ok json => pure json

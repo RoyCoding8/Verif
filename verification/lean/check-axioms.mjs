@@ -8,7 +8,9 @@ const names = [
   "formalDropsToBounded",
   "boundedDependencyBlocksFormal",
   "allFormalComponentsPreserveFormal",
-  "insufficientTestedEvidenceRejectsBounded"
+  "insufficientTestedEvidenceRejectsBounded",
+  "gateExact",
+  "gateRefusesMissing"
 ];
 for (const name of names) {
   const matching = output.split(/\r?\n/).filter((line) => line.includes("VerityContract." + name));

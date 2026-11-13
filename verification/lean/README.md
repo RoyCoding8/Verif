@@ -28,3 +28,9 @@ node compare.mjs lean-results.json
 ~~~
 
 The fixtures include each assurance level, domain mismatches, and requirements that fail when a dependency has lower assurance. The Lean executable checks each outcome against the expected values in `fixtures.json` before printing results.
+
+## Promotion decision
+
+`gateExact` proves that the reference accepts exactly when all nine modeled predicates hold. `gateRefusesMissing` covers a missing decision input. `compare-gate.mjs` builds one genuine Git candidate and verifier receipt, then changes each predicate's inputs independently. It checks the precise refusal reason for each single fault and compares all 512 combinations plus a missing bundle against the Lean reference.
+
+Run `lake exe contractFixtures gate > gate-results.json` and `node compare-gate.mjs gate-results.json` from this directory. The correspondence covers the nine mutations and one valid receipt. It leaves arbitrary JavaScript objects and Git, SQLite, verifier execution, and promotion atomicity outside the proof.

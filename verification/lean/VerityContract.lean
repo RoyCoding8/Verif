@@ -61,4 +61,30 @@ theorem insufficientTestedEvidenceRejectsBounded :
     supports .tested .bounded = false := by
   decide
 
+structure GateInput where
+  authority : Bool
+  budget : Bool
+  contract : Bool
+  receipt : Bool
+  scope : Bool
+  composition : Bool
+  freshness : Bool
+  verdict : Bool
+  artifacts : Bool
+
+def gateAuthorized (input : GateInput) : Prop :=
+  input.authority = true ∧ input.budget = true ∧ input.contract = true ∧
+  input.receipt = true ∧ input.scope = true ∧ input.composition = true ∧
+  input.freshness = true ∧ input.verdict = true ∧ input.artifacts = true
+
+def gate : Option GateInput → Bool
+  | none => false
+  | some input => input.authority && input.budget && input.contract && input.receipt &&
+    input.scope && input.composition && input.freshness && input.verdict && input.artifacts
+
+theorem gateExact (input : GateInput) : gate (some input) = true ↔ gateAuthorized input := by
+  simp [gate, gateAuthorized, Bool.and_assoc]
+
+theorem gateRefusesMissing : gate none = false := rfl
+
 end VerityContract

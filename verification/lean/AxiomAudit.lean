@@ -6,3 +6,5 @@ import VerityContract
 #print axioms VerityContract.boundedDependencyBlocksFormal
 #print axioms VerityContract.allFormalComponentsPreserveFormal
 #print axioms VerityContract.insufficientTestedEvidenceRejectsBounded
+#print axioms VerityContract.gateExact
+#print axioms VerityContract.gateRefusesMissing
