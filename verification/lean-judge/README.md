@@ -4,10 +4,11 @@ This is the first deductive judge in Verity. A caller supplies a complete, trust
 
 ## Contract
 
-The public function is judgeLean({ challenge, solution, theorem, theorems, timeoutMs, signal, scratch }).
+The public function is judgeLean({ challenge, solution, theorem, theorems, modules, timeoutMs, signal, scratch }).
 
 - challenge and solution are UTF-8 Lean source strings. The trusted challenge is a full Challenge.lean; the candidate is the full Solution.lean.
 - Supply exactly one of theorem or theorems. theorem is the legacy single Lean identifier; theorems is a nonempty array of Lean identifiers. Each name matches the simple identifier rule in src/lean-judge.mjs.
+- Optional modules carry up to 16 principal-approved UTF-8 local helpers. Each uses a distinct case-insensitive `Verity`-prefixed module name. Both projects receive the same source for every helper.
 - scratch is the verifier-owned absolute directory used for isolated temporary projects.
 - The result is { accepted, stdout, stderr }. Comparator exit 0 returns accepted: true; exit 1 returns accepted: false. Comparator exit 2, an unknown exit, a version mismatch, a process-start failure, cancellation, timeout, or a trusted-challenge build/export failure throws.
 - The function never parses proof output to decide acceptance. It does not use --inadvisably-no-sandbox.
@@ -18,11 +19,11 @@ leanEnvironment is deterministic JSON data recording the adapter version, Lean t
 
 Each call creates two distinct temporary Lake projects.
 
-1. The challenge project contains controller-written Lake metadata and only the exact trusted Challenge.lean bytes. It builds and exports the full module before the candidate is introduced.
-2. The solution project contains controller-written Lake metadata and comparator configuration plus only the exact candidate Solution.lean bytes. It does not contain Challenge.lean.
+1. The challenge project contains controller-written Lake metadata, the exact trusted Challenge.lean bytes, and the approved helpers. It builds and exports the full module before the candidate is introduced.
+2. The solution project contains controller-written Lake metadata, comparator configuration, the exact candidate Solution.lean bytes, and the approved helpers. Challenge.lean stays in its own project.
 3. The solution project invokes lake comparator --challenge-from-export=<file> --paranoid. The trusted export is passed as a read-only input. Comparator builds the candidate solution inside its bubblewrap sandbox.
 
-The child process receives only PATH, locale, timezone, and HOME and ELAN_HOME when present. It does not inherit process credentials or comparator/Lean override variables. The project manifests declare no dependencies; this first method accepts self-contained Lean core proofs.
+The child process receives only PATH, locale, timezone, and HOME and ELAN_HOME when present. The project manifests declare zero external dependencies. Approved helpers build from source in both projects.
 
 ## Judgment
 

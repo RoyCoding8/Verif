@@ -42,3 +42,39 @@ jobs:
           fi
           cat "$RUNNER_TEMP/stale-evidence.log"
           grep --fixed-strings 'Invariant FreshAuthorizedWrites is violated.' "$RUNNER_TEMP/stale-evidence.log"
+
+  promotion-inductive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Install pinned Apalache
+        run: |
+          archive="$RUNNER_TEMP/apalache-0.63.0.tgz"
+          curl --fail --location --retry 3 https://github.com/apalache-mc/apalache/releases/download/v0.63.0/apalache-0.63.0.tgz --output "$archive"
+          echo "a756e96af249bf33cd7629667a49472cb26ac8227c48583da139b414834d59df  $archive" | sha256sum --check -
+          mkdir "$RUNNER_TEMP/apalache"
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP/apalache" --strip-components=1
+          echo "$RUNNER_TEMP/apalache/bin" >> "$GITHUB_PATH"
+      - name: Check initiation, preservation, and safety
+        working-directory: verification
+        run: |
+          apalache-mc check --run-dir="$RUNNER_TEMP/inductive-init" --init=Init --inv=IndInv --length=0 PromotionInductive.tla
+          apalache-mc check --run-dir="$RUNNER_TEMP/inductive-step" --init=IndInv --inv=IndInv --length=1 PromotionInductive.tla
+          apalache-mc check --run-dir="$RUNNER_TEMP/inductive-safety" --init=IndInv --inv=Safety --length=0 PromotionInductive.tla
+      - name: Require a stale-evidence counterexample
+        working-directory: verification
+        run: |
+          out="$RUNNER_TEMP/inductive-mutant"
+          status=0
+          apalache-mc check --run-dir="$out" --init=Init --next=UnsafeNext --inv=Safety --length=4 PromotionInductive.tla > "$RUNNER_TEMP/inductive-mutant.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/inductive-mutant.log"
+          test "$status" -eq 12
+          test -s "$out/counterexample.tla"
+          grep --fixed-strings 'InvariantViolation ==' "$out/counterexample.tla"
