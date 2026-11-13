@@ -452,6 +452,47 @@ test('records an approved coverage exception while still requiring the candidate
   }
 });
 
+test('a protected ref move at the compare-and-swap triggers a fresh checked integration', async t => {
+  const fixtureSettings = await fixture(t);
+  const task = fixtureSettings.tasks[1];
+  const settings = { ...fixtureSettings, tasks: [task], worker: fixtureWorker };
+  const repo = new GitRepo(settings.repository);
+  const ref = task.policy.ref;
+  const base = repo.readRef(ref);
+  const moved = repo.promotionCommit({ tree: repo.tree(base), parent: base, operation: 'concurrent-move',
+    receipt: '1'.repeat(64) });
+  const updateRef = GitRepo.prototype.updateRef;
+  let superseded;
+  GitRepo.prototype.updateRef = function (name, next, old, operation) {
+    if (superseded === undefined) {
+      superseded = { operation, next };
+      updateRef.call(this, name, moved, old);
+    }
+    return updateRef.call(this, name, next, old, operation);
+  };
+  let result;
+  try {
+    [result] = await runTasks(settings);
+  } finally {
+    GitRepo.prototype.updateRef = updateRef;
+  }
+  assert.equal(result.status, 'promoted', result.reason);
+  assert.equal(repo.readRef(ref), result.commit);
+  assert.deepEqual(repo.commitObject(result.commit).parents, [moved]);
+  assert.notEqual(result.commit, superseded.next);
+  const journal = new Journal(settings.journalPath);
+  try {
+    assert.equal(journal.getOperation(superseded.operation).status, 'abandoned');
+    const { old, receipt } = journal.getOperation(result.operation);
+    assert.equal(old, moved);
+    assert.equal(receipt.base, base);
+    assert.deepEqual(repo.commitObject(receipt.candidate).parents, [moved]);
+    assert.equal(receipt.evidence.results[0].commit, receipt.candidate);
+  } finally {
+    journal.close();
+  }
+});
+
 test('recovers a real Git ref update interrupted before the journal commit, even after revocation', async t => {
   const fixtureSettings = await fixture(t);
   const settings = { ...fixtureSettings, tasks: [fixtureSettings.tasks[1]], worker: fixtureWorker };
