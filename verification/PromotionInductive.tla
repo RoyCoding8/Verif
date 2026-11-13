@@ -123,7 +123,7 @@ UnsafeNext == Next \/ UnsafeWriteRef
 
 TypeOK ==
   /\ head \in Commits
-  /\ activeAuth \subseteq Tasks
+  /\ activeAuth \in SUBSET Tasks
   /\ checkedHead \in [Tasks -> Commits]
   /\ phase \in SlotPhases
   /\ opOwner \in Tasks \cup {NoTask}
