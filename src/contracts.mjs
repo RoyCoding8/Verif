@@ -184,6 +184,9 @@ export function planVerification(intent) {
 export function makeContract(input, plan) {
   const { id, goal, scope, policy, dependencies = [], base = 'head-at-dispatch' } = input;
   requireThat(text(id) && text(goal) && Number.isSafeInteger(input.revision) && input.revision >= 1, 'Invalid contract identity');
+  requireThat(policy && typeof policy === 'object' && !Array.isArray(policy), 'Invalid contract policy');
+  requireThat(!Object.hasOwn(policy, 'delegation') || policy.delegation === 'monotonic', 'Unsupported delegation policy');
+  requireThat(!Object.hasOwn(policy, 'reuseEvidence') || typeof policy.reuseEvidence === 'boolean', 'Invalid evidence reuse policy');
   requireThat(Array.isArray(dependencies) && dependencies.every(text) && !dependencies.includes(id) &&
     new Set(dependencies).size === dependencies.length, 'Invalid task dependencies');
   requireThat(base === 'head-at-dispatch' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(base), 'Invalid task base');
