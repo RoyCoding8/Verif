@@ -157,6 +157,13 @@ function normalizeObligation(obligation, claims) {
   requireThat(method !== 'lean-comparator' || (expect === 'PASS' && cases.length === 1 && leanName(cases[0])),
     'Lean obligations require one named theorem and an expected PASS');
   const normalized = { id: obligation.id, claim, subject, expect, witness, method, oracle, outputs, cases, timeoutMs: obligation.timeoutMs };
+  if (Object.hasOwn(obligation, 'inputPaths')) {
+    const { inputPaths } = obligation;
+    requireThat(method !== 'lean-comparator' && Array.isArray(inputPaths) && inputPaths.length > 0 &&
+      inputPaths.every(safePath) && new Set(inputPaths).size === inputPaths.length,
+    'Input projection requires unique file paths and a Node verification method');
+    normalized.inputPaths = [...inputPaths].sort();
+  }
   if (Object.hasOwn(obligation, 'proofDependencies')) {
     requireThat(method === 'lean-comparator' && subject === 'candidate' && Array.isArray(obligation.proofDependencies) &&
       obligation.proofDependencies.length > 0, 'Proof dependencies require a candidate Lean obligation');
@@ -248,13 +255,18 @@ export function approvedTask(input) {
 export function evidenceKeys(obligation, claim, subject, manifest, environment, proofDependencies) {
   const run = digest({
     version: 1, method: obligation.method, oracle: obligation.oracle, cases: obligation.cases,
-    timeoutMs: obligation.timeoutMs, subject, manifest, environment,
+    timeoutMs: obligation.timeoutMs, ...evidenceSubject(obligation, subject, manifest), environment,
     ...(obligation.proofDependencies ? { proofDependencies } : {}),
   });
   return { run, authorization: digest({
     version: 1, run, obligation: obligation.id, claim, expect: obligation.expect,
     witness: obligation.witness, outputs: obligation.outputs,
   }) };
+}
+
+export function evidenceSubject(obligation, subject, manifest) {
+  return obligation.inputPaths ? { inputPaths: obligation.inputPaths, files: manifest.files }
+    : { subject, manifest };
 }
 
 export function compose(plan, results) {

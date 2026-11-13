@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
@@ -47,7 +47,7 @@ async function fixture(t) {
   };
 }
 
-function probeTask({ id, claimId, base, clockOracle, constantOracle, clockOutputs = [], constantOutputs = ['cases.json'] }) {
+function probeTask({ id, claimId, base, clockOracle, constantOracle, clockOutputs = [], constantOutputs = ['cases.json'], inputPaths }) {
   const intent = {
     id, revision: 1, goal: 'Verify deterministic probe behavior.', base,
     scope: { read: ['probe.mjs'], write: ['probe.mjs'], forbidden: [] },
@@ -58,7 +58,8 @@ function probeTask({ id, claimId, base, clockOracle, constantOracle, clockOutput
       { id: 'clock-' + id, claim: claimId, subject: 'candidate', expect: 'FAIL', witness: 'clock', method: 'node-test',
         oracle: clockOracle, cases: ['clock'], timeoutMs: 5_000, outputs: clockOutputs },
       { id: 'constant-' + id, claim: claimId, subject: 'candidate', expect: 'PASS', method: 'node-test',
-        oracle: constantOracle, cases: ['constant'], timeoutMs: 5_000, outputs: constantOutputs },
+        oracle: constantOracle, cases: ['constant'], timeoutMs: 5_000, outputs: constantOutputs,
+        ...(inputPaths ? { inputPaths } : {}) },
     ],
   };
   return approvedTask(approve(intent));
@@ -90,6 +91,60 @@ function verifyTask(fixtureSettings, task, journal, attempt, deadline = Date.now
   return verify({ repo: fixtureSettings.repo, task, base: fixtureSettings.base, candidate: fixtureSettings.candidate,
     oracleRoot: fixtureSettings.oracleRoot, scratch: fixtureSettings.settings.scratch, deadline, journal, attempt });
 }
+
+test('approved Node projection reuses only the same executed files and checks the current receipt', async t => {
+  const settings = await fixture(t);
+  const { repo, root, base } = settings;
+  const journal = new Journal(join(root, 'projection.sqlite'));
+  t.after(async () => { journal.close(); await settings.cleanup(); });
+  const lookedUp = [];
+  const observedJournal = {
+    authority: journal.authority.bind(journal),
+    rememberEvidence: journal.rememberEvidence.bind(journal),
+    reusableEvidence: key => {
+      const value = journal.reusableEvidence(key);
+      lookedUp.push(Boolean(value));
+      return value;
+    },
+  };
+  const original = probeTask({ ...settings, id: 'projected', claimId: 'projection', inputPaths: ['probe.mjs', 'dependency.mjs'] });
+  const workspace = join(root, 'candidate-workspace');
+  await writeFile(join(workspace, 'probe.mjs'), [
+    "import { value } from './dependency.mjs';",
+    'export const constant = () => value;',
+    'export const clock = () => 1;',
+  ].join('\n'));
+  await writeFile(join(workspace, 'dependency.mjs'), 'export const value = { z: 1, a: { y: 2, b: 3 } };');
+  const candidate = () => repo.capture(workspace, base);
+  const attempt = beginAttempt(journal, original, 'projection');
+  const run = (task = original, attemptId = attempt) =>
+    verifyTask({ ...settings, candidate: candidate() }, task, observedJournal, attemptId);
+  const first = await run();
+  assert.deepEqual(lookedUp.splice(0), [false, false]);
+  await writeFile(join(workspace, 'independent.txt'), 'unrelated');
+  const second = await run();
+  assert.deepEqual(lookedUp.splice(0), [false, true]);
+  assert.notEqual(second.candidate, first.candidate);
+  assert.deepEqual(second.results[1].manifest.files.map(file => file.path), ['dependency.mjs', 'probe.mjs']);
+  assert.deepEqual(second.results[1].keys, first.results[1].keys);
+  const decision = receipt => decide({ task: original, receipt, authority: journal.authority(attempt), base,
+    candidate: second.candidate, manifests: new Map([[second.candidate, repo.manifest(second.candidate)]]),
+    changedPaths: ['probe.mjs'], now: 0, deadline: 1 });
+  assert.deepEqual(decision(second), { promote: true });
+  assert.match(decision(first).reason, /Receipt identity mismatch/);
+  await writeFile(join(workspace, 'dependency.mjs'), 'export const value = { z: 1, a: { y: 2, b: 3 } }; // changed');
+  const third = await run();
+  assert.deepEqual(lookedUp.splice(0), [false, false]);
+  assert.notEqual(third.results[1].keys.run, second.results[1].keys.run);
+  const bytes = (await readFile(join(settings.oracleRoot, settings.constantOracle.file), 'utf8')) + '\n';
+  await writeFile(join(settings.oracleRoot, 'revised.json'), bytes);
+  const changedOracle = probeTask({ ...settings, id: 'revised', claimId: 'projection', inputPaths: ['probe.mjs', 'dependency.mjs'],
+    constantOracle: { file: 'revised.json', digest: hash(bytes) } });
+  await run(changedOracle, beginAttempt(journal, changedOracle, 'revised'));
+  assert.deepEqual(lookedUp.splice(0), [true, false]);
+  const omitted = probeTask({ ...settings, id: 'omitted', claimId: 'projection', inputPaths: ['probe.mjs'] });
+  await assert.rejects(run(omitted, beginAttempt(journal, omitted, 'omitted')), /ERR_MODULE_NOT_FOUND/);
+});
 
 test('raw evidence is reused across approvals, then current artifacts and authority are checked', async t => {
   const settings = await fixture(t);

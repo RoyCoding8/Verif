@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { lstat, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { assertExhaustiveDomain, compose, digest, evidenceKeys, hash, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
+import { assertExhaustiveDomain, compose, digest, evidenceKeys, evidenceSubject, hash, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
 import { judgeLean, leanEnvironment } from './lean-judge.mjs';
 import { leanClaimChallenge, readLeanDefinitions } from './lean-claim.mjs';
 import { proofSources } from './proof-dependencies.mjs';
@@ -11,7 +11,7 @@ const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
 const evaluator = await readFile(new URL('./evaluate.mjs', import.meta.url));
 const environment = { runtime: process.version, platform: process.platform, arch: process.arch, adapter: hash(evaluator) };
-const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './contracts.mjs'].map(async path =>
+const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './contracts.mjs', './git.mjs'].map(async path =>
   hash(await readFile(new URL(path, import.meta.url))))));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
   adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs', './lean-claim.mjs', './proof-dependencies.mjs'].map(async path =>
@@ -22,7 +22,8 @@ function environmentFor(plan) {
 }
 
 function evidenceEnvironment(obligation) {
-  return obligation.method === 'lean-comparator' ? proofEnvironment : environment;
+  if (obligation.method === 'lean-comparator') return proofEnvironment;
+  return obligation.inputPaths ? reuseEnvironment() : environment;
 }
 
 function reuseEnvironment() {
@@ -36,9 +37,18 @@ function reuseEnvironment() {
 export function evidenceReuseKey({ obligation, claim, subject, tree, manifest, oracleBytes, environment: runEnvironment }) {
   return digest({
     version: 2, method: obligation.method, oracle: obligation.oracle, oracleBytes: hash(oracleBytes),
-    cases: obligation.cases, timeoutMs: obligation.timeoutMs, subject, tree, manifest,
+    cases: obligation.cases, timeoutMs: obligation.timeoutMs,
+    ...evidenceSubject(obligation, subject, manifest), ...(obligation.inputPaths ? {} : { tree }),
     environment: runEnvironment, domain: obligation.method === 'finite-domain' ? claim.domain : null,
   });
+}
+
+function restrictManifest(manifest, inputPaths) {
+  if (!inputPaths) return manifest;
+  const allowed = new Set(inputPaths);
+  const files = manifest.files.filter(file => allowed.has(file.path));
+  requireThat(files.length === allowed.size, 'Approved input projection is missing files');
+  return { tree: manifest.tree, files };
 }
 
 async function regularFile(root, name, limit = maxArtifactSize) {
@@ -198,7 +208,7 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     const workspace = join(temp, 'subject');
     const bytes = await regularFile(oracleRoot, obligation.oracle.file);
     requireThat(hash(bytes) === obligation.oracle.digest, 'Oracle digest changed for ' + obligation.id);
-    const manifest = repo.materialize(commit, workspace);
+    const manifest = repo.materialize(commit, workspace, obligation.inputPaths);
     await assertMaterialization(workspace, manifest);
     const oracle = JSON.parse(bytes.toString('utf8'));
     requireThat(dependencies.length === (obligation.proofDependencies?.length ?? 0), 'Missing verified proof dependencies');
@@ -273,7 +283,7 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
       const result = receipt.results.find(result => result.id === obligation.id);
       const claim = plan.claims.find(claim => claim.id === obligation.claim);
       const subject = subjectFor(obligation, base, candidate);
-      const manifest = manifests.get(subject);
+      const manifest = restrictManifest(manifests.get(subject), obligation.inputPaths);
       const dependencies = proofDependencies?.get(obligation.id);
       if (obligation.proofDependencies) {
         requireThat(dependencies?.length === obligation.proofDependencies.length, 'Missing verified proof dependencies');
