@@ -45,6 +45,8 @@ test('malformed sampled oracles are rejected at the boundary', () => {
     { ...oracle, module: '../escape.mjs' },
     { ...oracle, module: 'C:/escape.mjs' },
     { ...oracle, axes: [[]] },
+    { ...oracle, axes: Array(1) },
+    { ...oracle, axes: [Array(1)] },
     { ...oracle, axes: [[1, 1]] },
     { ...oracle, axes: [[{ a: 1 }, { a: 1 }]] },
     { ...oracle, axes: [[{ a: 1, b: 2 }, { b: 2, a: 1 }]] },
@@ -58,6 +60,7 @@ test('malformed sampled oracles are rejected at the boundary', () => {
     { ...oracle, samples: 0 },
     { ...oracle, samples: 1001 },
     { ...oracle, samples: 2.5 },
+    { ...oracle, axes: [['x'.repeat(1024 * 1024)]], samples: 3 },
   ];
   for (const candidate of invalid) assert.throws(() => expandSampledCases(candidate));
   const cyclic = {};
