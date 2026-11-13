@@ -11,6 +11,8 @@ The existential is a concrete old-domain witness. The guarantee implication has 
 
 The JavaScript verifier accepts a contract containing the SHA-256 of controller-loaded trusted definitions, a qualified domain type, precondition and guarantee identifiers, and old/new assumption-label arrays. It normalizes labels to NFC, trims and sorts them, rejects duplicates, and requires the new labels to be a subset of the old labels. Labels are recorded metadata for caller-side enforcement; they are not inserted into the theorem as assumptions.
 
+`refinesTrans` proves that two refinements compose over an arbitrary common domain. CI runs `lake env lean -DwarningAsError=true AxiomAudit.lean` and requires all three reported theorems to be axiom-free.
+
 The controller supplies the frozen definitions source separately. The verifier checks its exact UTF-8 SHA-256 against the contract before generating a fresh theorem name from the full contract digest. It builds the challenge itself and passes that challenge and the worker solution to the existing Linux Lake Comparator judge. A worker cannot supply or replace the challenge. Comparator checks the candidate against the trusted exported statement and rejects proofs that depend on axioms outside the existing allowlist.
 
 This verifies the named Lean proposition. It does not establish that the trusted definitions or predicate names accurately describe software behavior; the controller must approve those definitions and the caller must enforce any recorded assumptions.

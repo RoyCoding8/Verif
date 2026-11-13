@@ -28,6 +28,8 @@ For a task whose approved policy includes `"delegation": "monotonic"`, run `node
 
 Set `policy.feedbackChecks` to the obligation IDs the worker may run while constructing a candidate. The default is an empty list. Keep held-out acceptance obligations outside this list. Workers receive a generic refusal on retry and operators can inspect the specific final refusal with `status`.
 
+Use `node src/cli.mjs refinement manifest.json witness-request.json` on Linux to check a Lean witness for a principal-approved refinement contract. The manifest's `refinements` list supplies `id`, `source` relative to `oracles`, `contract`, `approvedDigest`, and `timeoutMs`. The witness request supplies the matching `id` and the candidate Lean module as `solution`. The command returns a checked witness and its binding digests. Approval of a task revision still goes through `delegate` or the principal.
+
 Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it.
 
 ## Evidence and operating scope

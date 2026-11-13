@@ -40,7 +40,14 @@ jobs:
       - name: Replay the shared Lean contract and finite witness
         run: lake check
         working-directory: verification/lean-refinement
+      - name: Check the refinement declarations for axiom dependencies
+        run: |
+          lake env lean -DwarningAsError=true AxiomAudit.lean > "$RUNNER_TEMP/refinement-axioms.txt"
+          for theorem in VerityRefinement.refinesTrans finiteWitness newGuaranteeMayImproveOutsideOldDomain; do
+            grep -Fx "'$theorem' does not depend on any axioms" "$RUNNER_TEMP/refinement-axioms.txt"
+          done
+        working-directory: verification/lean-refinement
       - name: Check generated witnesses with the pinned Lake Comparator
-        run: node --test test/refinement-proof.test.mjs
+        run: node --test test/refinement-proof.test.mjs test/refinement-cli.test.mjs
         env:
           VERITY_LEAN_SMOKE: "1"
