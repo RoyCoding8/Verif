@@ -233,8 +233,19 @@ export class GitRepo {
     return { tree: this.tree(commit), files: describeFiles(this.#root, entries(this.#root, commit)) };
   }
 
-  materialize(commit, destination) {
-    const list = entries(this.#root, commit);
+  materialize(commit, destination, selection) {
+    let selected;
+    if (selection !== undefined) {
+      if (!Array.isArray(selection) || selection.length === 0 || selection.some((value) => typeof value !== 'string')) {
+        throw new Error('File selection must be a nonempty array of exact repository paths');
+      }
+      selected = new Set(selection);
+      if (selected.size !== selection.length) throw new Error('File selection contains duplicate paths');
+      assertPortableSet(selection);
+    }
+    const allEntries = entries(this.#root, commit);
+    const list = selected === undefined ? allEntries : allEntries.filter(({ path: file }) => selected.delete(file));
+    if (selected?.size) throw new Error(`File selection contains missing paths: ${[...selected].join(', ')}`);
     const paths = list.map((entry) => entry.path);
     assertPortableSet(paths);
     protectMetadata(this.#root, destination);
