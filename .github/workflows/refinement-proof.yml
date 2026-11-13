@@ -48,6 +48,10 @@ jobs:
           for theorem in VerityRefinement.refinesTrans finiteWitness newGuaranteeMayImproveOutsideOldDomain; do
             grep -Fx "'$theorem' does not depend on any axioms" "$RUNNER_TEMP/refinement-axioms.txt"
           done
+          lake env lean -DwarningAsError=true DelegationLawAudit.lean > "$RUNNER_TEMP/delegation-axioms.txt"
+          for theorem in issueSound staleSuccessorDigestReplayRejected staleSuccessorApprovalReplayRejected staleClaimReplayRejected; do
+            grep -Fx "'VerityDelegation.$theorem' does not depend on any axioms" "$RUNNER_TEMP/delegation-axioms.txt"
+          done
         working-directory: verification/lean-refinement
       - name: Check generated witnesses with the pinned Lake Comparator
         run: node --test test/refinement-proof.test.mjs test/refinement-cli.test.mjs test/semantic-delegation.test.mjs
