@@ -14,3 +14,5 @@ The JavaScript verifier accepts a contract containing the SHA-256 of controller-
 The controller supplies the frozen definitions source separately. The verifier checks its exact UTF-8 SHA-256 against the contract before generating a fresh theorem name from the full contract digest. It builds the challenge itself and passes that challenge and the worker solution to the existing Linux Lake Comparator judge. A worker cannot supply or replace the challenge. Comparator checks the candidate against the trusted exported statement and rejects proofs that depend on axioms outside the existing allowlist.
 
 This verifies the named Lean proposition. It does not establish that the trusted definitions or predicate names accurately describe software behavior; the controller must approve those definitions and the caller must enforce any recorded assumptions.
+
+The checked-in Lake manifest has no dependencies. It keeps `lake check` from trying to create package state inside its kernel-replay sandbox.
