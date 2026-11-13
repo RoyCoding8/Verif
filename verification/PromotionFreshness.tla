@@ -7,7 +7,7 @@ ASSUME StaleEvidenceMutant \in BOOLEAN
 Tasks == {"A", "B"}
 Heads == {"old", "targetA", "targetB", "external"}
 NoOwner == "none"
-TargetFor == ["A" |-> "targetA", "B" |-> "targetB"]
+TargetFor == [t \in Tasks |-> IF t = "A" THEN "targetA" ELSE "targetB"]
 OpStates == {"none", "prepared", "promoted", "abandoned"}
 Epochs == 0..2
 
