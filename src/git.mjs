@@ -159,7 +159,7 @@ function assertPortableSet(paths) {
   }
 }
 
-function commitMessage(operation, receipt) {
+export function promotionCommitMessage(operation, receipt) {
   if (typeof operation !== 'string' || !operation.trim() || /[\r\n\0]/.test(operation)) throw new Error('Invalid operation');
   if (typeof receipt !== 'string' || !/^[0-9a-f]{64}$/.test(receipt)) throw new Error('Receipt must be a full SHA256 id');
   return `Verity promotion\n\nOperation: ${operation}\nReceipt: ${receipt}\n`;
@@ -222,6 +222,28 @@ export class GitRepo {
     return run(this.#root, ['rev-parse', `${commit}^{tree}`]).trim();
   }
 
+  commitObject(commit) {
+    oid(commit, 'commit id');
+    run(this.#root, ['--no-replace-objects', 'cat-file', '-e', `${commit}^{commit}`]);
+    const canonical = run(this.#root, ['--no-replace-objects', 'rev-parse', '--verify', `${commit}^{commit}`]).trim();
+    if (canonical !== commit) throw new Error('Commit id must be full and canonical');
+    const raw = run(this.#root, ['--no-replace-objects', 'cat-file', 'commit', commit], undefined, {}, true);
+    const split = raw.indexOf(Buffer.from('\n\n'));
+    if (split < 0) throw new Error('Malformed Git commit object');
+    const headers = new TextDecoder('utf-8', { fatal: true }).decode(raw.subarray(0, split)).split('\n');
+    const trees = headers.filter(line => line.startsWith('tree ')).map(line => line.slice(5));
+    const parents = headers.filter(line => line.startsWith('parent ')).map(line => line.slice(7));
+    const message = new TextDecoder('utf-8', { fatal: true }).decode(raw.subarray(split + 2));
+    if (trees.length !== 1 || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(trees[0]) ||
+        parents.some(parent => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(parent))) {
+      throw new Error('Malformed Git commit object headers');
+    }
+    const tree = trees[0];
+    run(this.#root, ['--no-replace-objects', 'cat-file', '-e', `${tree}^{tree}`]);
+    for (const parent of parents) run(this.#root, ['--no-replace-objects', 'cat-file', '-e', `${parent}^{commit}`]);
+    return { commit, tree, parents, message };
+  }
+
   integrationTree(head, candidate) {
     ensureCommit(this.#root, head);
     ensureCommit(this.#root, candidate);
@@ -280,7 +302,7 @@ export class GitRepo {
     oid(tree, 'tree id');
     ensureCommit(this.#root, parent);
     run(this.#root, ['cat-file', '-e', `${tree}^{tree}`]);
-    const message = commitMessage(operation, receipt);
+    const message = promotionCommitMessage(operation, receipt);
     return run(this.#root, ['-c', 'user.name=Verity', '-c', 'user.email=verity@invalid', 'commit-tree', tree, '-p', parent], Buffer.from(message)).trim();
   }
 
@@ -356,7 +378,7 @@ export class GitRepo {
     };
     const tree = writeTree(rootNode);
     const receipt = crypto.createHash('sha256').update(tree).digest('hex');
-    const message = commitMessage('capture', receipt);
+    const message = promotionCommitMessage('capture', receipt);
     return run(this.#root, ['-c', 'user.name=Verity', '-c', 'user.email=verity@invalid', 'commit-tree', tree, '-p', base], Buffer.from(message)).trim();
   }
 }
