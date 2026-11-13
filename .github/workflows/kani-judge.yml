@@ -32,8 +32,22 @@ jobs:
           cargo install --locked kani-verifier --version 0.68.0
           cargo kani setup
           kani --version
-      - name: Run approved smoke fixture and retain the raw export
+      - name: Verify the approved invariant and retain the raw export
         run: |
-          kani -Z unstable-options verification/kani/smoke.rs --harness verity_smoke --export-json kani-smoke.json
+          kani -Z unstable-options verification/kani/smoke.rs --harness verity_positive --export-json kani-smoke.json
           test -s kani-smoke.json
           cat kani-smoke.json
+      - name: Observe a property counterexample
+        run: |
+          set +e
+          kani -Z unstable-options verification/kani/counterexample.rs --harness verity_counterexample --export-json kani-counterexample.json
+          result=$?
+          set -e
+          test "$result" -ne 0
+          test -s kani-counterexample.json
+          cat kani-counterexample.json
+      - name: Observe an unreachable probe control
+        run: |
+          kani -Z unstable-options verification/kani/unreachable.rs --harness verity_unreachable --export-json kani-unreachable.json
+          test -s kani-unreachable.json
+          cat kani-unreachable.json
