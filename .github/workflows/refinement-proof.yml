@@ -1,0 +1,46 @@
+name: Verify refinement witnesses
+
+on:
+  push:
+    branches: [main, "ci/**", "wt/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  refinement-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Install pinned Lean and check bubblewrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          archive="$RUNNER_TEMP/lean-4.35.0-linux.tar.zst"
+          curl --fail --location --retry 3 \
+            https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-linux.tar.zst \
+            --output "$archive"
+          echo "7289597a44543246c9227b8cae501767e095ce17f6d448b95fc4a8dc97268f6d  $archive" | sha256sum --check -
+          tar --zstd --extract --file "$archive" --directory "$RUNNER_TEMP"
+          export PATH="$RUNNER_TEMP/lean-4.35.0-linux/bin:$PATH"
+          echo "$RUNNER_TEMP/lean-4.35.0-linux/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          command -v bwrap
+          bwrap --ro-bind / / --unshare-user --unshare-net --die-with-parent /usr/bin/true
+          lake --version
+      - name: Replay the shared Lean contract and finite witness
+        run: lake check
+        working-directory: verification/lean-refinement
+      - name: Check generated witnesses with the pinned Lake Comparator
+        run: node --test test/refinement-proof.test.mjs
+        env:
+          VERITY_LEAN_SMOKE: "1"
