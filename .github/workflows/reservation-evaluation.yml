@@ -1,6 +1,8 @@
 name: Evaluate Pi reservation changes
 
 on:
+  push:
+    branches: [ci/verity-live-evaluation]
   workflow_dispatch:
     inputs:
       provider:
@@ -23,6 +25,7 @@ permissions:
 
 jobs:
   evaluate:
+    if: github.event_name == 'workflow_dispatch' || (github.event.deleted == false && vars.VERITY_EVAL_MODEL != '')
     runs-on: ubuntu-latest
     timeout-minutes: 95
     steps:
@@ -36,17 +39,17 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Run matched trials
         env:
-          TRIAL_PROVIDER: ${{ inputs.provider }}
-          TRIAL_MODEL: ${{ inputs.model }}
-          TRIAL_COUNT: ${{ inputs.trials }}
-          GEMINI_API_KEY: ${{ inputs.provider == 'google' && secrets.GEMINI_API_KEY || '' }}
-          OPENROUTER_API_KEY: ${{ inputs.provider == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+          TRIAL_PROVIDER: ${{ inputs.provider || vars.VERITY_EVAL_PROVIDER }}
+          TRIAL_MODEL: ${{ inputs.model || vars.VERITY_EVAL_MODEL }}
+          TRIAL_COUNT: ${{ inputs.trials || vars.VERITY_EVAL_TRIALS || '2' }}
+          GEMINI_API_KEY: ${{ (inputs.provider || vars.VERITY_EVAL_PROVIDER) == 'google' && secrets.GEMINI_API_KEY || '' }}
+          OPENROUTER_API_KEY: ${{ (inputs.provider || vars.VERITY_EVAL_PROVIDER) == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
         shell: bash
         run: |
           set -euo pipefail
           case "$TRIAL_PROVIDER" in
             google) test -n "$GEMINI_API_KEY" || { echo 'Missing GEMINI_API_KEY'; exit 1; } ;;
             openrouter) test -n "$OPENROUTER_API_KEY" || { echo 'Missing OPENROUTER_API_KEY'; exit 1; } ;;
-            *) exit 1 ;;
+            *) echo 'Select google or openrouter as the evaluation provider'; exit 1 ;;
           esac
           node evaluation/reservation.mjs --live "$TRIAL_PROVIDER" "$TRIAL_MODEL" "$TRIAL_COUNT"

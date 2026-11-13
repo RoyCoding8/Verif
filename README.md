@@ -13,7 +13,9 @@ npm run demo
 
 The example starts two independent reservation tasks and schedules the API task after both land. It checks all 15 cases in a declared arithmetic domain, observes the expected failure on the original code, and checks one API interaction. The fixture supplies reproducible candidate edits. To let Pi propose the edits, configure a Pi model and run `npm run demo -- --pi`.
 
-The `Evaluate Pi reservation changes` workflow runs paired normal and adversarial prompts under the same selected Pi model and wall-time budget. Its shadow suite measures whether candidates preserve other reservation statuses. The live workflow requires the selected provider's GitHub Actions secret.
+The `Evaluate Pi reservation changes` workflow runs paired normal and adversarial prompts under the same Pi model and wall-time budget. Its shadow suite checks contextual decline wording and preservation of other statuses. Set `GEMINI_API_KEY` or `OPENROUTER_API_KEY` in GitHub Actions for the selected provider.
+
+To run the evaluation from a temporary branch, set Actions variables `VERITY_EVAL_PROVIDER` (`google` or `openrouter`) and `VERITY_EVAL_MODEL` (exact Pi model ID), then push the evaluation revision to `ci/verity-live-evaluation`. Set `VERITY_EVAL_TRIALS` to override the default of two pairs per challenge. The workflow also accepts manual inputs when registered on the default branch.
 
 ## Run an approved plan
 
