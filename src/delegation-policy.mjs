@@ -68,12 +68,24 @@ function requirePlanDoesNotReplace(parentPlan, candidatePlan, semantic) {
       'Delegation removes or changes obligation ' + obligation.id);
   }
 
+  const oldCriteria = byId(parentPlan.criteria);
   const nextCriteria = byId(candidatePlan.criteria);
   for (const criterion of parentPlan.criteria) {
     const next = nextCriteria.get(criterion.id);
     requireThat(next && criterion.description === next.description &&
-      criterion.claims.every(claim => next.claims.includes(claim)),
-    'Delegation removes or weakens criterion ' + criterion.id);
+      Object.hasOwn(criterion, 'exception') === Object.hasOwn(next, 'exception'),
+    'Delegation removes, changes, or weakens criterion ' + criterion.id);
+    if (Object.hasOwn(criterion, 'exception')) {
+      requireThat(same(criterion.exception, next.exception), 'Delegation changes coverage exception ' + criterion.id);
+    } else {
+      requireThat(criterion.claims.every(claim => next.claims.includes(claim)),
+        'Delegation removes or weakens criterion ' + criterion.id);
+    }
+  }
+  for (const criterion of candidatePlan.criteria) {
+    if (!oldCriteria.has(criterion.id)) {
+      requireThat(!Object.hasOwn(criterion, 'exception'), 'Delegation cannot create coverage exception ' + criterion.id);
+    }
   }
 }
 

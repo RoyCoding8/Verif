@@ -234,7 +234,18 @@ export function planVerification(intent) {
     'Refinable Lean claim requires its named candidate proof obligation');
   }
   const criteria = [...index(intent.criteria, 'criterion').values()].map(criterion => {
-    requireThat(text(criterion.description) && Array.isArray(criterion.claims) && criterion.claims.length > 0 &&
+    const hasClaims = Object.hasOwn(criterion, 'claims');
+    const hasException = Object.hasOwn(criterion, 'exception');
+    requireThat(text(criterion.description) && hasClaims !== hasException,
+      'Invalid coverage shape for criterion ' + criterion.id);
+    if (hasException) {
+      const exception = criterion.exception;
+      requireThat(exception && typeof exception === 'object' && !Array.isArray(exception) &&
+        Object.keys(exception).length === 1 && Object.hasOwn(exception, 'risk') && text(exception.risk),
+      'Invalid coverage exception for criterion ' + criterion.id);
+      return { id: criterion.id, description: criterion.description, exception: { risk: exception.risk } };
+    }
+    requireThat(Array.isArray(criterion.claims) && criterion.claims.length > 0 &&
       criterion.claims.every(id => indexedClaims.has(id)), 'Invalid coverage for criterion ' + criterion.id);
     return { id: criterion.id, description: criterion.description, claims: criterion.claims };
   });
@@ -245,7 +256,7 @@ export function planVerification(intent) {
     return weakest(direct.map(o => methods.get(o.method)));
   });
   const covered = new Set();
-  const pending = criteria.flatMap(criterion => criterion.claims);
+  const pending = criteria.flatMap(criterion => criterion.claims ?? []);
   while (pending.length) {
     const id = pending.pop();
     if (covered.has(id)) continue;

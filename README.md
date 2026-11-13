@@ -28,6 +28,8 @@ Set `orthogonalOnly` to `true` to dispatch tasks together only when their approv
 
 To ask Pi for a plan, list the available oracle files in each task's `oracleFiles` and run `node src/cli.mjs propose manifest.json`. Review the returned intent before approving it.
 
+To accept a residual risk, enter an acceptance criterion with `id`, `description`, and `exception: { "risk": "Review pending" }` in the manifest, then approve the exact plan. The receipt retains the risk, and the remaining claims and obligations still have to pass. Changing or adding an exception requires direct approval.
+
 For a task whose approved policy includes `"delegation": "monotonic"`, run `node src/cli.mjs delegate manifest.json proposed-task.json` to check the next full task revision. A plain task proposal can add coverage and tighten budgets and path permissions while preserving existing claims and obligations. The controller can install the returned revision in its manifest after the check.
 
 On Linux, a bound Lean claim can advance by a checked semantic refinement. Its `lean` record names the frozen `source`, `definitionDigest`, `domain` and `implementation`, and the current `precondition`, `guarantee`, `assumptions` and candidate proof `obligation`. Seal the candidate oracle against the frozen declarations and the statement `∀ x, precondition x → implementation x → guarantee x`. Supply a delegation request shaped as `{ "task": proposedTask, "witness": { "claim": "claim-id" } }` to obtain the exact witness challenge. Add the Lean source text as `witness.solution` and rerun `delegate` to obtain the checked revision. The witness is bound to the exact predecessor, successor and claim. Retain prior obligations and add a new proof obligation for the successor predicate.

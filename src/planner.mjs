@@ -82,6 +82,9 @@ export async function proposeTask({ repository, oracleRoot, scratch, draft, work
     requireThat(stats.isFile() && !stats.isSymbolicLink() && stats.size < 1024 * 1024, 'Invalid plan proposal file');
     const proposed = JSON.parse(await readFile(proposedPath, 'utf8'));
     requireThat(Array.isArray(proposed.obligations), 'No proposed obligations');
+    requireThat(Array.isArray(proposed.criteria) &&
+      proposed.criteria.every(criterion => criterion && !Object.hasOwn(criterion, 'exception')),
+    'Planner criteria require claim coverage. A principal can record an exception in the reviewed manifest.');
     const obligations = proposed.obligations.map(({ oracleFile, leanModules: _proposedModules, ...fields }) => {
       const oracle = catalog.get(oracleFile);
       requireThat(oracle, 'Planner selected an unapproved oracle ' + oracleFile);

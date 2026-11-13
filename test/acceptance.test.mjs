@@ -386,19 +386,52 @@ test('planner binds approved oracle bytes without granting task approval', async
   const settings = await fixture(t);
   const draft = { ...settings.tasks[1], oracleFiles: ['messages.json'] };
   const original = draft.obligations[0];
-  const worker = async ({ workspace, scope, goal }) => {
+  const proposer = criteria => async ({ workspace, scope, goal }) => {
     assert.match(goal, /declined-message/);
     assert.doesNotMatch(goal, /"expected"/);
     await writeFile(join(workspace, scope.write[0]), JSON.stringify({
-      criteria: draft.criteria,
+      criteria,
       claims: draft.claims,
       obligations: [{ ...original, oracleFile: 'messages.json', oracle: { digest: 'agent supplied' } }],
     }));
   };
+  const worker = proposer(draft.criteria);
   const proposal = await proposeTask({ ...settings, draft, worker });
   assert.equal(proposal.intent.approval, undefined);
   assert.deepEqual(proposal.plan.obligations[0].oracle, original.oracle);
   await assert.rejects(runTasks({ ...settings, tasks: [proposal.intent], worker }), /principal approval/);
+  const exception = { id: 'review', description: 'Manual review complete', exception: { risk: 'Review pending' } };
+  await assert.rejects(proposeTask({ ...settings, draft, worker: proposer([...draft.criteria, exception]) }),
+    /A principal can record an exception/);
+});
+
+test('records an approved coverage exception while still requiring the candidate check', async t => {
+  const settings = await fixture(t);
+  const task = settings.tasks[1];
+  const exception = { id: 'review', description: 'Manual review complete', exception: { risk: 'Review pending' } };
+  const proposed = { ...task, criteria: [...task.criteria, exception] };
+  const repo = new GitRepo(settings.repository);
+  const head = repo.readRef(task.policy.ref);
+  await assert.rejects(runTasks({ ...settings, tasks: [proposed], worker: fixtureWorker }), /principal approval/);
+
+  const approved = approve(proposed);
+  const [refused] = await runTasks({ ...settings, tasks: [approved],
+    worker: ({ workspace }) => writeFile(join(workspace, 'response.mjs'), "export const response = () => 'incorrect';\n") });
+  assert.equal(refused.status, 'refused');
+  assert.match(refused.reason, /Unexpected verdict/);
+  assert.equal(repo.readRef(task.policy.ref), head);
+
+  const [promoted] = await runTasks({ ...settings, tasks: [approve({ ...approved, revision: 2 })], worker: fixtureWorker });
+  assert.equal(promoted.status, 'promoted');
+  assert.equal(repo.readRef(task.policy.ref), promoted.commit);
+  const journal = new Journal(settings.journalPath);
+  try {
+    const { receipt } = journal.getOperation(promoted.operation);
+    assert.deepEqual(receipt.task.plan.criteria.at(-1), exception);
+    assert.deepEqual(receipt.evidence.assurance, { message: 'tested' });
+  } finally {
+    journal.close();
+  }
 });
 
 test('recovers a real Git ref update interrupted before the journal commit', async t => {
