@@ -3,7 +3,7 @@ export const attemptSlots = Object.freeze(['a', 'b']);
 
 export function initialState(cap) {
   if (![1, 2, 3].includes(cap)) throw new RangeError('cap must be 1, 2, or 3');
-  return Object.freeze({ cap, claim: 0, spent: 0, active: null, grants: [] });
+  return Object.freeze({ cap, status: 'queued', claim: 0, spent: 0, active: null, grants: [] });
 }
 
 export function stateKey(state) {
@@ -26,18 +26,36 @@ function grantRecord(state, id) {
   return state.grants.find(grant => grant.id === id);
 }
 
-export function transitions(state, { unsafeRefundSpent = false, unsafeStaleGrant = false } = {}) {
+export function transitions(state, {
+  unsafeRefundSpent = false,
+  unsafeStaleGrant = false,
+  unsafeQueuedGrant = false,
+} = {}) {
   const edges = [];
 
-  if (state.claim < maximumClaims && state.active === null) {
-    edges.push(edge(state, 'claim', replace(state, { claim: state.claim + 1 })));
+  if (state.status === 'queued' && state.claim < maximumClaims) {
+    edges.push(edge(state, 'startTask', replace(state, {
+      status: 'running',
+      claim: state.claim + 1,
+    })));
   }
 
-  if (state.claim > 0) {
-    const requeued = replace(state, { active: null });
-    edges.push(edge(state, 'requeue', requeued, state.active ? 'released' : 'recoveredBeforeGrant'));
+  if (state.status === 'running') {
+    edges.push(edge(state, 'requeue', replace(state, {
+      status: 'queued',
+      active: null,
+    }), state.active || state.grants.some(grant => grant.claim === state.claim)
+      ? 'requeuedAfterAttempt'
+      : 'recoveredBeforeGrant'));
     if (unsafeRefundSpent && state.spent > 0) {
-      edges.push(edge(state, 'requeue', replace(state, { active: null, spent: 0 }), 'unsafeRefund'));
+      edges.push(edge(state, 'requeue', replace(state, {
+        status: 'queued',
+        active: null,
+        spent: 0,
+      }), 'unsafeRefund'));
+    }
+    if (state.active) {
+      edges.push(edge(state, 'invalidate', replace(state, { active: null }), 'invalidated'));
     }
   }
 
@@ -45,14 +63,18 @@ export function transitions(state, { unsafeRefundSpent = false, unsafeStaleGrant
     for (const slot of attemptSlots) {
       const id = attemptId(claim, slot);
       const existing = grantRecord(state, id);
-      if (existing && state.active?.id === id && state.active.claim === claim) {
-        edges.push(edge(state, 'grant', state, 'idempotent', { id, claim }));
+      if (existing) {
+        edges.push(edge(state, 'grant', state, 'idempotent', {
+          id,
+          claim,
+          attemptActive: state.active?.id === id && state.active.claim === claim,
+        }));
         continue;
       }
 
-      const valid = claim === state.claim && claim === Number(id.split('-')[0]) &&
-        state.active === null && state.spent < state.cap && !existing;
-      if (valid) {
+      const currentGrantAllowed = state.status === 'running' && claim === state.claim &&
+        claim === Number(id.split('-')[0]) && state.active === null && state.spent < state.cap;
+      if (currentGrantAllowed) {
         const grant = { id, claim };
         edges.push(edge(state, 'grant', replace(state, {
           spent: state.spent + 1,
@@ -61,13 +83,23 @@ export function transitions(state, { unsafeRefundSpent = false, unsafeStaleGrant
         }), 'granted', { id, claim }));
       } else {
         edges.push(edge(state, 'grant', state, 'refused', { id, claim }));
-        if (unsafeStaleGrant && claim !== state.claim && state.active === null && state.spent < state.cap && !existing) {
+        if (unsafeStaleGrant && state.status === 'running' && claim < state.claim &&
+          state.active === null && state.spent < state.cap) {
           const grant = { id, claim };
           edges.push(edge(state, 'grant', replace(state, {
             spent: state.spent + 1,
             active: grant,
             grants: [...state.grants, grant],
           }), 'unsafeStaleGrant', { id, claim }));
+        }
+        if (unsafeQueuedGrant && state.status === 'queued' && claim === state.claim &&
+          state.active === null && state.spent < state.cap) {
+          const grant = { id, claim };
+          edges.push(edge(state, 'grant', replace(state, {
+            spent: state.spent + 1,
+            active: grant,
+            grants: [...state.grants, grant],
+          }), 'unsafeQueuedGrant', { id, claim }));
         }
       }
     }
@@ -78,18 +110,19 @@ export function transitions(state, { unsafeRefundSpent = false, unsafeStaleGrant
 
 export function accountingInvariant(transition) {
   const { from, to, action, outcome } = transition;
-  const expectedSpent = outcome === 'granted' || outcome === 'unsafeStaleGrant'
-    ? from.spent + 1
-    : outcome === 'unsafeRefund' ? 0 : from.spent;
+  const spendsToken = outcome === 'granted' || outcome === 'unsafeStaleGrant' || outcome === 'unsafeQueuedGrant';
+  const expectedSpent = spendsToken ? from.spent + 1 : outcome === 'unsafeRefund' ? 0 : from.spent;
   return to.spent === expectedSpent && to.spent === to.grants.length &&
     to.spent >= from.spent && to.spent <= to.cap &&
     (action === 'grant' || to.grants.length === from.grants.length);
 }
 
 export function authorizationInvariant(transition) {
-  if (transition.outcome !== 'granted' && transition.outcome !== 'unsafeStaleGrant') return true;
+  if (transition.outcome !== 'granted' && transition.outcome !== 'unsafeStaleGrant' &&
+    transition.outcome !== 'unsafeQueuedGrant') return true;
   const { from, to, action, id, claim } = transition;
-  if (action !== 'grant' || claim !== from.claim || claim !== Number(id.split('-')[0])) return false;
+  if (action !== 'grant' || from.status !== 'running' || to.status !== 'running' || claim !== from.claim ||
+    claim !== Number(id.split('-')[0])) return false;
   return to.active?.id === id && to.active.claim === claim;
 }
 
