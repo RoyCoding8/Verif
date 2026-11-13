@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { normalizeModelRoute } from './model-route.mjs';
 
 const levels = new Map([['tested', 0], ['bounded', 1], ['formal', 2]]);
-const methods = new Map([['node-test', 'tested'], ['finite-domain', 'bounded'], ['lean-comparator', 'formal']]);
+const methods = new Map([['node-test', 'tested'], ['node-property', 'tested'], ['finite-domain', 'bounded'], ['lean-comparator', 'formal']]);
 
 export function requireThat(condition, message) {
   if (!condition) throw new Error(message);
@@ -239,6 +239,9 @@ export function makeContract(input, plan) {
   requireThat(Number.isSafeInteger(policy.budgetMs) && policy.budgetMs > 0 && policy.budgetMs <= 2_147_483_647, 'Invalid task budget');
   const maxRepairs = policy.maxRepairs ?? 0;
   requireThat(Number.isSafeInteger(maxRepairs) && maxRepairs >= 0 && maxRepairs < Number.MAX_SAFE_INTEGER, 'Invalid repair limit');
+  for (const limit of ['maxToolCalls', 'maxVerificationMs']) {
+    requireThat(!Object.hasOwn(policy, limit) || Number.isSafeInteger(policy[limit]) && policy[limit] >= 0, 'Invalid ' + limit);
+  }
   requireThat(plan.obligations.reduce((sum, o) => sum + o.timeoutMs, 0) < policy.budgetMs, 'Verification exceeds task budget');
   requireThat(scope && ['read', 'write', 'forbidden'].every(key => Array.isArray(scope[key]) && scope[key].every(safePath)),
     'Invalid contract path scope');

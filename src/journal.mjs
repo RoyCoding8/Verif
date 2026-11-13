@@ -119,6 +119,14 @@ export class Journal {
         payload TEXT NOT NULL,
         payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64)
       );
+      CREATE TABLE IF NOT EXISTS run_usage (
+        run_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('tool calls', 'verification time')),
+        spent INTEGER NOT NULL CHECK (spent >= 0),
+        PRIMARY KEY (run_id, task_id, kind),
+        FOREIGN KEY (run_id, task_id) REFERENCES run_tasks(run_id, task_id)
+      );
       CREATE TABLE IF NOT EXISTS run_tasks (
         run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
         task_id TEXT NOT NULL,
@@ -261,6 +269,25 @@ export class Journal {
       FROM attempts current WHERE current.id = ? AND current.run_id IS NOT NULL
     `).get(requireString(id, 'id'));
     return row?.number ?? null;
+  }
+
+  reserveUsage(id, kind, amount, limit) {
+    id = requireString(id, 'id');
+    if (![amount, limit].every(value => Number.isSafeInteger(value) && value >= 0) || amount < 1) {
+      throw new TypeError('Invalid budget reservation');
+    }
+    this.#transaction(() => {
+      const attempt = this.#db.prepare('SELECT run_id, task_id FROM attempts WHERE id = ?').get(id);
+      if (!attempt?.run_id || !this.authority(id)?.active) throw new Error('Attempt cannot reserve resources');
+      const row = this.#db.prepare('SELECT spent FROM run_usage WHERE run_id = ? AND task_id = ? AND kind = ?')
+        .get(attempt.run_id, attempt.task_id, kind);
+      const spent = row?.spent ?? 0;
+      if (amount > limit - spent) throw new Error('Task budget exhausted for ' + kind);
+      this.#db.prepare(`
+        INSERT INTO run_usage (run_id, task_id, kind, spent) VALUES (?, ?, ?, ?)
+        ON CONFLICT (run_id, task_id, kind) DO UPDATE SET spent = excluded.spent
+      `).run(attempt.run_id, attempt.task_id, kind, spent + amount);
+    });
   }
 
   invalidate(id) {

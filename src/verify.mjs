@@ -6,6 +6,7 @@ import { assertExhaustiveDomain, compose, digest, evidenceKeys, evidenceSubject,
 import { judgeLean, leanEnvironment } from './lean-judge.mjs';
 import { leanClaimChallenge, readLeanDefinitions } from './lean-claim.mjs';
 import { proofSources } from './proof-dependencies.mjs';
+import { expandSampledCases, sampleGenerator } from './sampled-cases.mjs';
 
 const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
@@ -13,6 +14,7 @@ const evaluator = await readFile(new URL('./evaluate.mjs', import.meta.url));
 const environment = { runtime: process.version, platform: process.platform, arch: process.arch, adapter: hash(evaluator) };
 const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './contracts.mjs', './git.mjs'].map(async path =>
   hash(await readFile(new URL(path, import.meta.url))))));
+const samplingAdapter = hash(await readFile(new URL('./sampled-cases.mjs', import.meta.url)));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
   adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs', './lean-claim.mjs', './proof-dependencies.mjs'].map(async path =>
     hash(await readFile(new URL(path, import.meta.url)))))) };
@@ -23,6 +25,7 @@ function environmentFor(plan) {
 
 function evidenceEnvironment(obligation) {
   if (obligation.method === 'lean-comparator') return proofEnvironment;
+  if (obligation.method === 'node-property') return { ...reuseEnvironment(), samplingAdapter };
   return obligation.inputPaths ? reuseEnvironment() : environment;
 }
 
@@ -111,6 +114,11 @@ function nodeInputs(cases, obligation, claim, manifest) {
 }
 
 async function prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies, oracleRoot) {
+  if (obligation.method === 'node-property') {
+    const cases = expandSampledCases(oracle);
+    const { seed, samples } = oracle;
+    return { cases, inputs: nodeInputs(cases, obligation, claim, manifest), sampling: { generator: sampleGenerator, seed, samples } };
+  }
   if (obligation.method !== 'lean-comparator') return { cases: oracle, inputs: nodeInputs(oracle, obligation, claim, manifest) };
   const parsed = parseLeanOracle(oracle);
   requireThat(parsed.theorem === obligation.cases[0], 'Lean theorem does not match obligation ' + obligation.id);
@@ -177,7 +185,8 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
     });
     level = obligation.method === 'finite-domain' ? 'bounded' : 'tested';
     statuses = observed;
-    output = { cases: observed, observations: raw.observations };
+    output = { cases: observed, observations: raw.observations,
+      ...(prepared.sampling ? { sampling: prepared.sampling } : {}) };
   }
   const report = readReport({ cases: statuses }, obligation);
   const artifacts = Object.fromEntries(obligation.outputs.map(path => {
@@ -188,6 +197,7 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
     id: obligation.id, ...report, commit, manifest, level,
     keys: evidenceKeys(obligation, claim, commit, manifest, evidenceEnvironment(obligation), prepared.dependencies),
     ...(prepared.proof ? { proof: prepared.proof } : {}),
+    ...(prepared.sampling ? { sampling: prepared.sampling } : {}),
     ...(obligation.proofDependencies ? { proofDependencies: prepared.dependencies } : {}),
     observation: { stdout: hash(raw.stdout), stderr: hash(raw.stderr), exit: raw.exit },
     outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])),
@@ -202,7 +212,8 @@ function cacheAuthority(journal, attempt, task, obligation) {
     authority.policy === digest(task.contract.policy);
 }
 
-async function runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt, dependencies = [] }) {
+async function runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt,
+  reserveVerification, dependencies = [] }) {
   const temp = await mkdtemp(join(scratch, 'check-'));
   try {
     const workspace = join(temp, 'subject');
@@ -216,8 +227,8 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     const timeout = Math.min(obligation.timeoutMs, deadline - Date.now());
     requireThat(timeout > 0, 'Task budget expired');
     const cacheEnabled = cacheAuthority(journal, attempt, task, obligation);
-    const cacheKey = cacheEnabled ? evidenceReuseKey({ obligation, claim, subject: commit, tree: repo.tree(commit), manifest,
-      oracleBytes: bytes, environment: reuseEnvironment() }) : null;
+    const cacheKey = cacheEnabled ? evidenceReuseKey({ obligation, claim, subject: commit, tree: manifest.tree, manifest,
+      oracleBytes: bytes, environment: obligation.method === 'node-property' ? evidenceEnvironment(obligation) : reuseEnvironment() }) : null;
     let raw = cacheEnabled ? journal.reusableEvidence(cacheKey) : null;
     let result;
     let remember = false;
@@ -230,6 +241,7 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     }
     if (!raw) {
       const evaluate = obligation.method === 'lean-comparator' ? evaluateLean : evaluateNode;
+      reserveVerification?.(timeout);
       raw = await evaluate({ prepared, inputs: prepared.inputs, obligation, workspace, timeout, signal, temp });
       await assertMaterialization(workspace, manifest);
       result = presentEvidence(raw, { obligation, claim, commit, manifest, cases: prepared.cases, prepared });
@@ -244,26 +256,28 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
   }
 }
 
-export async function verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt, proofDependencies }) {
+export async function verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt,
+  reserveVerification, proofDependencies }) {
   const results = [];
   for (const obligation of task.plan.obligations) {
     signal?.throwIfAborted();
     const claim = task.plan.claims.find(claim => claim.id === obligation.claim);
     const commit = subjectFor(obligation, base, candidate);
     results.push(await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt,
-      dependencies: proofDependencies?.get(obligation.id) }));
+      reserveVerification, dependencies: proofDependencies?.get(obligation.id) }));
   }
   const assurance = compose(task.plan, results);
   return { version: 1, contract: task.approval, plan: task.contract.plan, base, candidate, environment: environmentFor(task.plan), results, assurance };
 }
 
-export async function checkFeedback({ repo, task, name, base, candidate, oracleRoot, scratch, signal, deadline, proofDependencies }) {
+export async function checkFeedback({ repo, task, name, base, candidate, oracleRoot, scratch, signal, deadline,
+  reserveVerification, proofDependencies }) {
   const obligation = task.plan.obligations.find(item => item.id === name);
   requireThat(obligation, 'Unknown approved check ' + name);
   const claim = task.plan.claims.find(item => item.id === obligation.claim);
   const commit = subjectFor(obligation, base, candidate);
   const { status, witness } = await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline,
-    dependencies: proofDependencies?.get(name) });
+    reserveVerification, dependencies: proofDependencies?.get(name) });
   return witness ? status + ' (' + witness + ')' : status;
 }
 

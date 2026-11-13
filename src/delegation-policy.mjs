@@ -1,6 +1,7 @@
 import { approvedTask, digest, makeContract, planVerification, requireThat } from './contracts.mjs';
 
-const policyFields = new Set(['budgetMs', 'delegation', 'maxRepairs', 'ref', 'reuseEvidence']);
+const resourceLimits = ['maxToolCalls', 'maxVerificationMs'];
+const policyFields = new Set(['budgetMs', 'delegation', 'maxRepairs', 'ref', 'reuseEvidence', ...resourceLimits]);
 
 function same(left, right) {
   return digest(left) === digest(right);
@@ -38,6 +39,8 @@ function requirePolicyDoesNotWeaken(parent, candidate) {
   requireThat(candidate.ref === parent.ref && candidate.budgetMs <= parent.budgetMs &&
     (candidate.maxRepairs ?? 0) <= (parent.maxRepairs ?? 0), 'Delegation weakens task policy');
   requireThat(same(candidate.reuseEvidence ?? null, parent.reuseEvidence ?? null), 'Delegation changes evidence reuse policy');
+  requireThat(resourceLimits.every(limit => (candidate[limit] ?? Infinity) <= (parent[limit] ?? Infinity)),
+    'Delegation expands a resource limit');
   for (const key of Object.keys(parent)) {
     if (!policyFields.has(key)) requireThat(Object.hasOwn(candidate, key) && same(candidate[key], parent[key]),
       'Delegation changes unknown policy field ' + key);

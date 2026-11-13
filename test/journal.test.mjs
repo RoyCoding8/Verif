@@ -333,12 +333,19 @@ test('attempt reservations are shared across connections and survive requeue and
     const claim = first.startTask(runId, task.id).claim;
     const request = { id: 'one', contract: task.approval, policy: 'policy', runId, taskId: task.id, claim };
     assert.deepEqual(first.registerAttempt(request), second.registerAttempt(request));
+    first.reserveUsage('one', 'tool calls', 1, 2);
+    second.reserveUsage('one', 'verification time', 20, 50);
     assert.throws(() => second.registerAttempt({ ...request, id: 'two' }), /already has an active attempt/);
     second.requeueTask(runId, task.id);
     const successor = second.startTask(runId, task.id).claim;
     assert.equal(first.authority('one').active, false);
+    assert.throws(() => first.reserveUsage('one', 'tool calls', 1, 2), /cannot reserve resources/);
     assert.throws(() => first.registerAttempt({ ...request, id: 'stale' }), /does not authorize/);
     second.registerAttempt({ ...request, id: 'two', claim: successor });
+    second.reserveUsage('two', 'tool calls', 1, 2);
+    assert.throws(() => first.reserveUsage('two', 'tool calls', 1, 2), /budget exhausted/);
+    assert.throws(() => first.reserveUsage('two', 'verification time', 31, 50), /budget exhausted/);
+    first.reserveUsage('two', 'verification time', 30, 50);
     second.requeueTask(runId, task.id);
     const reopened = new Journal(path);
     try {

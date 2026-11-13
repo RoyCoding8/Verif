@@ -154,7 +154,8 @@ async function integrate(context, task, claim, attempt, base, original, deadline
     const paths = repo.changedPaths(head, candidate);
     requireThat(digest(paths) === digest(originalPaths), 'Integration changed the approved path set');
     const proofDependencies = resolveProofDependencies(task, runId, prerequisites, journal);
-    const evidence = await verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt, proofDependencies });
+    const evidence = await verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt,
+      reserveVerification: resourceReservation(journal, attempt, 'verification time', contract.policy.maxVerificationMs), proofDependencies });
     if (repo.readRef(ref) !== head) continue;
     signal.throwIfAborted();
     const bundle = { repository, runId, claim, task, evidence, base, original, candidate, deadline, prerequisites };
@@ -179,6 +180,10 @@ async function integrate(context, task, claim, attempt, base, original, deadline
     }
   }
   throw new Refusal('Protected head kept moving during verification');
+}
+
+function resourceReservation(journal, attempt, kind, limit) {
+  return limit === undefined ? undefined : amount => journal.reserveUsage(attempt, kind, amount, limit);
 }
 
 async function runTask(context, task, { claim, startedMs }, prerequisites) {
@@ -212,6 +217,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
       else await worker({
         workspace, goal: contract.goal + diagnosis, scope: contract.scope, signal,
         ...(route ? { route } : {}),
+        reserveToolCall: resourceReservation(journal, attempt, 'tool calls', contract.policy.maxToolCalls)?.bind(null, 1),
         approvedChecks: [...feedbackChecks],
         runCheck: feedbackChecks.length === 0 ? undefined : async (name, options) => {
           requireThat(!checking, 'A feedback check is already running');
@@ -222,6 +228,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
             const checkSignal = options?.signal ? AbortSignal.any([signal, options.signal]) : signal;
             return await checkFeedback({
               repo, task, name, base, candidate: snapshot, oracleRoot, scratch, signal: checkSignal, deadline,
+              reserveVerification: resourceReservation(journal, attempt, 'verification time', contract.policy.maxVerificationMs),
               proofDependencies: resolveProofDependencies(task, runId, prerequisites, journal),
             });
           } catch (error) {

@@ -99,6 +99,22 @@ test("an approved route resolves the exact Pi identity before opening a session"
   assert.equal(state.options, undefined);
 });
 
+test("Pi denies a write before touching the checkout when the controller refuses its tool reservation", async t => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk();
+  let calls = 0;
+  await runPiWorker({ workspace, goal: "Write a note", scope: { read: [], write: ["allowed.txt", "blocked.txt"] }, sdk,
+    reserveToolCall: () => { if (++calls > 1) throw new Error("tool budget exhausted"); } });
+  const write = state.options.customTools.find(tool => tool.name === "write");
+  const args = { path: "allowed.txt", content: "first" };
+  assert.equal((await write.execute("1", args)).isError, undefined);
+  const blocked = await write.execute("2", { ...args, path: "blocked.txt" });
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.content[0].text, /budget exhausted/);
+  assert.equal(await readFile(path.join(workspace, args.path), "utf8"), "first");
+  await assert.rejects(readFile(path.join(workspace, "blocked.txt")), { code: "ENOENT" });
+});
+
 test("scoped tools read, edit, write, search, and limit named feedback checks", async (t) => {
   const workspace = await fixture(t);
   await mkdir(path.join(workspace, "src"));

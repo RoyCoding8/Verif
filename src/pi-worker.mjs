@@ -272,6 +272,15 @@ export async function runPiWorker({ workspace, goal, scope, signal, runCheck, sd
     });
   }
 
+  if (options.reserveToolCall) for (const tool of tools) {
+    const execute = tool.execute;
+    tool.execute = (...args) => {
+      try { options.reserveToolCall(); }
+      catch (error) { return textResult(error.message, {}, true); }
+      return execute(...args);
+    };
+  }
+
   const allowedTools = tools.map(({ name }) => name);
   const resourceLoader = {
     getExtensions: () => ({ extensions: [], errors: [], runtime: pi.createExtensionRuntime() }),

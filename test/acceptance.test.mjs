@@ -139,6 +139,57 @@ test('rollback is an approved candidate with its own checks and preserves later 
   assert.deepEqual(repo.changedPaths(initial, reverted.commit), ['reserve.mjs']);
 });
 
+test('seeded property checks execute generated cases and retain the sampling recipe', async t => {
+  const settings = await fixture(t);
+  const oracleRoot = join(settings.scratch, 'property-oracles');
+  await mkdir(oracleRoot, { recursive: true });
+  const seed = 234;
+  const samples = 12;
+  const oracle = { module: 'reserve.mjs', name: 'reserve', axes: [[0], [1, 2, 3]], expected: 0, seed, samples };
+  const bytes = JSON.stringify(oracle);
+  await writeFile(join(oracleRoot, 'property.json'), bytes);
+  const original = settings.tasks[0];
+  const obligation = { ...original.obligations[1], method: 'node-property',
+    cases: Array.from({ length: samples }, (_, index) => String(index)), oracle: { file: 'property.json', digest: hash(bytes) } };
+  const task = approve({ ...original, claims: [{ id: 'stock', required: 'tested', statement: 'Zero stock stays zero' }], obligations: [obligation] });
+  const [refused] = await runTasks({ ...settings, oracleRoot, tasks: [task], worker: async ({ workspace }) => {
+    await writeFile(join(workspace, 'reserve.mjs'), 'export const reserve = () => -1;\n');
+  } });
+  assert.match(refused.reason, /Unexpected verdict/);
+  const [result] = await runTasks({ ...settings, oracleRoot, tasks: [approve({ ...task, revision: 2 })], worker: fixtureWorker });
+  assert.equal(result.status, 'promoted', JSON.stringify(result));
+  assert.deepEqual(result.assurance, { stock: 'tested' });
+  const journal = new Journal(settings.journalPath);
+  try {
+    const { evidence } = journal.getOperation(result.operation).receipt;
+    const checked = evidence.results[0];
+    assert.equal(typeof checked.sampling.generator, 'string');
+    assert.deepEqual({ seed: checked.sampling.seed, samples: checked.sampling.samples }, { seed, samples });
+    assert.equal(checked.cases.length, samples);
+    assert.ok(checked.cases.every(item => item.status === 'PASS'));
+    const artifact = JSON.parse(Buffer.from(checked.artifacts['cases.json'].base64, 'base64'));
+    assert.deepEqual(artifact.sampling, checked.sampling);
+    assert.equal(artifact.observations.length, samples);
+  } finally {
+    journal.close();
+  }
+});
+
+test('feedback and final verification draw on the same durable task budget', async t => {
+  const settings = await fixture(t);
+  const original = settings.tasks[0];
+  const task = approve({ ...original, policy: { ...original.policy, maxVerificationMs: 10_000, feedbackChecks: ['stock-before'] } });
+  const repo = new GitRepo(settings.repository);
+  const initial = repo.readRef(task.policy.ref);
+  const [result] = await runTasks({ ...settings, tasks: [task], worker: async job => {
+    assert.equal(await job.runCheck('stock-before'), 'FAIL (0/1)');
+    await fixtureWorker(job);
+  } });
+  assert.equal(result.status, 'refused');
+  assert.match(result.reason, /budget exhausted for verification time/);
+  assert.equal(repo.readRef(task.policy.ref), initial);
+});
+
 test('out-of-scope edit and failed oracle do not advance the protected ref', async t => {
   const settings = await fixture(t);
   const repo = new GitRepo(settings.repository);
