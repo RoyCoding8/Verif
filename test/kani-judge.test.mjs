@@ -111,7 +111,9 @@ function classifyObservation(observation) {
 }
 
 test('the report classifier matches the independent Lean finite contract', { skip: !smoke }, () => {
-  const tableRows = execFileSync('lean', ['-DwarningAsError=true', '--run', leanSpec], { cwd: root, encoding: 'utf8' })
+  const tableRows = execFileSync('lean', ['-DwarningAsError=true', '--run', leanSpec], {
+    cwd: join(root, 'verification/lean'), encoding: 'utf8',
+  })
     .trim().split(/\r?\n/);
   const reference = new Map(tableRows.map(line => {
     const [index, verdict] = line.split('=');
