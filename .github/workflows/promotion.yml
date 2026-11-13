@@ -26,6 +26,7 @@ jobs:
           curl --fail --location --retry 3 https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar -o "$RUNNER_TEMP/tla2tools.jar"
           echo "bee4a54f3ee3d4afc347c3240ec2d9e93b075104  $RUNNER_TEMP/tla2tools.jar" | sha1sum --check -
           java -cp "$RUNNER_TEMP/tla2tools.jar" tlc2.TLC -workers 1 -deadlock -config Promotion.cfg Promotion.tla
+          java -cp "$RUNNER_TEMP/tla2tools.jar" tla2sany.SANY PromotionInductive.tla
           if java -cp "$RUNNER_TEMP/tla2tools.jar" tlc2.TLC -workers 1 -deadlock -config PromotionUnfenced.cfg Promotion.tla > "$RUNNER_TEMP/unfenced.log" 2>&1; then
             cat "$RUNNER_TEMP/unfenced.log"
             exit 1
