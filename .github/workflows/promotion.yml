@@ -32,3 +32,13 @@ jobs:
           fi
           cat "$RUNNER_TEMP/unfenced.log"
           grep --fixed-strings 'Invariant AuthorizedUpdateInvariant is violated.' "$RUNNER_TEMP/unfenced.log"
+      - name: Check competing promotions and stale evidence
+        working-directory: verification
+        run: |
+          java -cp "$RUNNER_TEMP/tla2tools.jar" tlc2.TLC -workers 1 -deadlock -config PromotionFreshness.cfg PromotionFreshness.tla
+          if java -cp "$RUNNER_TEMP/tla2tools.jar" tlc2.TLC -workers 1 -deadlock -config PromotionFreshnessStaleEvidence.cfg PromotionFreshness.tla > "$RUNNER_TEMP/stale-evidence.log" 2>&1; then
+            cat "$RUNNER_TEMP/stale-evidence.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/stale-evidence.log"
+          grep --fixed-strings 'Invariant FreshAuthorizedWrites is violated.' "$RUNNER_TEMP/stale-evidence.log"
