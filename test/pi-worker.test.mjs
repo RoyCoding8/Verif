@@ -76,6 +76,29 @@ test("an explicitly selected Pi model reports usage and refuses failed provider 
   assert.equal(failed.state.disposed, true);
 });
 
+test("an approved route resolves the exact Pi identity before opening a session", async t => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk();
+  const route = { provider: "provider", model: "provider/model" };
+  const model = { id: route.model };
+  const lookup = [];
+  let available = true;
+  const modelRuntime = {
+    getModel: (...identity) => { lookup.push(identity); return available ? model : undefined; },
+    hasConfiguredAuth: provider => provider === route.provider,
+  };
+  sdk.ModelRuntime = { create: async () => modelRuntime };
+  const job = { workspace, goal: "Inspect", scope: { read: [], write: [] }, route, sdk };
+  await runPiWorker(job);
+  assert.deepEqual(lookup, [[route.provider, route.model]]);
+  assert.equal(state.options.model, model);
+  assert.equal(state.options.modelRuntime, modelRuntime);
+  available = false;
+  state.options = undefined;
+  await assert.rejects(runPiWorker(job), /Approved Pi model is unavailable/);
+  assert.equal(state.options, undefined);
+});
+
 test("scoped tools read, edit, write, search, and limit named feedback checks", async (t) => {
   const workspace = await fixture(t);
   await mkdir(path.join(workspace, "src"));

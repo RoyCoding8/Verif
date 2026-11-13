@@ -254,6 +254,15 @@ export class Journal {
     return { id: row.id, contract: row.contract, policy: row.policy, active };
   }
 
+  attemptNumber(id) {
+    const row = this.#db.prepare(`
+      SELECT (SELECT COUNT(*) FROM attempts prior WHERE prior.run_id = current.run_id
+        AND prior.task_id = current.task_id AND prior.rowid <= current.rowid) AS number
+      FROM attempts current WHERE current.id = ? AND current.run_id IS NOT NULL
+    `).get(requireString(id, 'id'));
+    return row?.number ?? null;
+  }
+
   invalidate(id) {
     id = requireString(id, 'id');
     const result = this.#db.prepare('UPDATE attempts SET active = 0 WHERE id = ?').run(id);

@@ -81,7 +81,8 @@ function revision(parentInput, proposal, semantic) {
   const plan = planVerification(proposal);
   const contract = makeContract(proposal, plan);
   requireThat(contract.id === parent.contract.id && contract.goal === parent.contract.goal &&
-    contract.base === parent.contract.base && same(contract.dependencies, parent.contract.dependencies),
+    contract.base === parent.contract.base && same(contract.dependencies, parent.contract.dependencies) &&
+    contract.revertOperation === parent.contract.revertOperation,
   'Delegation replaces task identity, goal, base, or dependencies');
   requireThat(contract.revision === parent.contract.revision + 1, 'Delegation revision must advance exactly once');
   requirePolicyDoesNotWeaken(parent.contract.policy, contract.policy);
@@ -101,6 +102,7 @@ function revision(parentInput, proposal, semantic) {
     claims: plan.claims,
     obligations: plan.obligations,
     approval,
+    ...(contract.revertOperation ? { revertOperation: contract.revertOperation } : {}),
   };
   const binding = {
     version: 1,

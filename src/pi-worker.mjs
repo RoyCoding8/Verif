@@ -76,6 +76,7 @@ async function loadPiSdk() {
     SessionManager: sdk.SessionManager,
     SettingsManager: sdk.SettingsManager,
     createExtensionRuntime: sdk.createExtensionRuntime,
+    ModelRuntime: sdk.ModelRuntime,
     Type,
   };
 }
@@ -285,7 +286,17 @@ export async function runPiWorker({ workspace, goal, scope, signal, runCheck, sd
     extendResources: () => {},
     reload: async () => {},
   };
-  const { model, modelRuntime, thinkingLevel, agentDir } = options;
+  let { model, modelRuntime } = options;
+  const { route, thinkingLevel, agentDir } = options;
+  if (route) {
+    if (model || modelRuntime) throw new Error("Pi route conflicts with a supplied model or runtime");
+    modelRuntime = await pi.ModelRuntime.create({ allowModelNetwork: true, modelRefreshTimeoutMs: 20_000 });
+    model = modelRuntime.getModel(route.provider, route.model);
+    if (!model || !modelRuntime.hasConfiguredAuth(route.provider)) {
+      throw new Error("Approved Pi model is unavailable: " + route.provider + "/" + route.model);
+    }
+    signal?.throwIfAborted();
+  }
   const created = await pi.createAgentSession({
     cwd: root,
     ...(agentDir ? { agentDir } : {}),

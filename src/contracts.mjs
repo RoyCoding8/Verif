@@ -220,6 +220,7 @@ export function makeContract(input, plan) {
   const { id, goal, scope, policy, dependencies = [], base = 'head-at-dispatch' } = input;
   requireThat(text(id) && text(goal) && Number.isSafeInteger(input.revision) && input.revision >= 1, 'Invalid contract identity');
   requireThat(policy && typeof policy === 'object' && !Array.isArray(policy), 'Invalid contract policy');
+  const modelRoute = normalizeModelRoute(policy.modelRoute);
   requireThat(!Object.hasOwn(policy, 'delegation') || policy.delegation === 'monotonic', 'Unsupported delegation policy');
   requireThat(!Object.hasOwn(policy, 'reuseEvidence') || typeof policy.reuseEvidence === 'boolean', 'Invalid evidence reuse policy');
   if (Object.hasOwn(policy, 'feedbackChecks')) {
@@ -242,7 +243,13 @@ export function makeContract(input, plan) {
     'Invalid contract path scope');
   requireThat(scope.write.length > 0, 'Empty write scope');
   requireThat(!scope.write.some(path => within(path, scope.forbidden)), 'Write scope is forbidden');
-  return { version: 1, id, revision: input.revision, goal, base, dependencies, scope, policy, plan: digest(plan) };
+  if (Object.hasOwn(input, 'revertOperation')) {
+    requireThat(typeof input.revertOperation === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(input.revertOperation) &&
+      base === 'head-at-dispatch' && !modelRoute, 'Rollback requires a promoted operation ID, current target base and no model route');
+  }
+  return { version: 1, id, revision: input.revision, goal, base, dependencies, scope,
+    policy: modelRoute ? { ...policy, modelRoute } : policy, plan: digest(plan),
+    ...(input.revertOperation ? { revertOperation: input.revertOperation } : {}) };
 }
 
 export function approvedTask(input) {
@@ -284,3 +291,4 @@ export function compose(plan, results) {
   return assurance(plan, claim => weakest(plan.obligations.filter(o =>
     o.claim === claim.id && o.subject === 'candidate' && o.expect === 'PASS').map(o => byId.get(o.id).level)));
 }
+import { normalizeModelRoute } from './model-route.mjs';

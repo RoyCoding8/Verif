@@ -229,6 +229,15 @@ export class GitRepo {
     return oid(output.split(/\s+/)[0], 'integration tree id');
   }
 
+  revertIn(workspace, commit) {
+    ensureCommit(this.#root, commit);
+    const root = canonicalRepo(workspace);
+    if (root === this.#root || root.startsWith(`${this.#root}${path.sep}`) || this.#root.startsWith(`${root}${path.sep}`)) {
+      throw new Error('Revert workspace must be independent of the controller repository');
+    }
+    run(root, ['-c', 'rerere.enabled=false', 'revert', '--no-commit', commit]);
+  }
+
   manifest(commit) {
     return { tree: this.tree(commit), files: describeFiles(this.#root, entries(this.#root, commit)) };
   }

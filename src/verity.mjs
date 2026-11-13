@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { approvedTask, digest, requireThat, within } from './contracts.mjs';
 import { GitRepo } from './git.mjs';
 import { Journal } from './journal.mjs';
+import { selectModelRoute } from './model-route.mjs';
 import { runPiWorker } from './pi-worker.mjs';
 import { resolveProofDependencies } from './proof-dependencies.mjs';
 import { checkFeedback, decide, subjectFor, verify } from './verify.mjs';
@@ -54,6 +55,15 @@ function requirePrerequisites(repo, commit, prerequisites) {
   }
 }
 
+function rollbackTarget(repo, journal, repository, contract, head) {
+  const previous = journal.getOperation(contract.revertOperation);
+  if (!(previous?.status === 'promoted' && previous.ref === contract.policy.ref &&
+    previous.receipt.repository === repository && repo.contains(head, previous.next))) {
+    throw new Refusal('Rollback target is not a promoted operation in this branch history');
+  }
+  return previous.next;
+}
+
 function applyPrepared(journal, repo, id, signal) {
   return journal.promote(id, {
     readRef: ref => repo.readRef(ref),
@@ -63,6 +73,7 @@ function applyPrepared(journal, repo, id, signal) {
       const { task, evidence, base, original, candidate, deadline, prerequisites } = op.receipt;
       if (task.contract.policy.ref !== op.ref) throw new Refusal('Promotion ref differs from approved policy');
       requirePrerequisites(repo, op.old, prerequisites);
+      if (task.contract.revertOperation) rollbackTarget(repo, journal, op.receipt.repository, task.contract, op.old);
       const changedPaths = repo.changedPaths(op.old, op.next);
       const originalPaths = repo.changedPaths(base, original);
       if (digest(changedPaths) !== digest(originalPaths)) throw new Refusal('Integration changed the approved path set');
@@ -134,6 +145,7 @@ async function integrate(context, task, claim, attempt, base, original, deadline
     const head = repo.readRef(ref);
     requireThat(head, 'Protected ref does not exist: ' + ref);
     requirePrerequisites(repo, head, prerequisites);
+    if (contract.revertOperation) rollbackTarget(repo, journal, repository, contract, head);
     const operation = randomUUID();
     const tree = head === base ? repo.tree(original) : repo.integrationTree(head, original);
     const candidate = head === base ? original : repo.promotionCommit({
@@ -191,12 +203,15 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
     let temporary;
     let checking = false;
     try {
-      onEvent?.({ type: 'attempt_started', runId, task: contract.id, attempt });
+      const route = contract.policy.modelRoute && selectModelRoute(contract.policy.modelRoute, journal.attemptNumber(attempt));
+      onEvent?.({ type: 'attempt_started', runId, task: contract.id, attempt, ...(route ? { route } : {}) });
       temporary = await mkdtemp(join(scratch, 'attempt-'));
       const workspace = join(temporary, 'worker');
       repo.fork(base, workspace);
-      await worker({
+      if (contract.revertOperation) repo.revertIn(workspace, rollbackTarget(repo, journal, context.repository, contract, base));
+      else await worker({
         workspace, goal: contract.goal + diagnosis, scope: contract.scope, signal,
+        ...(route ? { route } : {}),
         approvedChecks: [...feedbackChecks],
         runCheck: feedbackChecks.length === 0 ? undefined : async (name, options) => {
           requireThat(!checking, 'A feedback check is already running');
