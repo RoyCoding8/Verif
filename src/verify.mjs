@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { lstat, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { assertExhaustiveDomain, compose, digest, evidenceKeys, evidenceSubject, hash, leanModuleDigests, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
@@ -27,6 +27,7 @@ function environmentFor(plan) {
 
 function evidenceEnvironment(obligation) {
   if (obligation.method === 'lean-comparator') return proofEnvironment;
+  if (obligation.method === 'node-differential') return reuseEnvironment();
   if (obligation.method === 'node-property') return { ...reuseEnvironment(), samplingAdapter };
   if (obligation.method === 'node-history') return { ...reuseEnvironment(), historyAdapter };
   return obligation.inputPaths ? reuseEnvironment() : environment;
@@ -116,6 +117,63 @@ function nodeInputs(cases, obligation, claim, manifest) {
   return inputs;
 }
 
+function nodeDifferentialInputs(cases, obligation, baseManifest, candidateManifest) {
+  requireThat(Array.isArray(cases) && digest(cases.map(item => item.id)) === digest(obligation.cases),
+    'Oracle case IDs do not match obligation ' + obligation.id);
+  return cases.map(item => {
+    requireThat(item && Object.keys(item).sort().join(',') === 'args,id,module,name' &&
+      safePath(item.module) && baseManifest.files.some(file => file.path === item.module) &&
+      candidateManifest.files.some(file => file.path === item.module) && text(item.name) && Array.isArray(item.args),
+    'Invalid differential oracle case ' + item?.id);
+    return { id: item.id, module: item.module, name: item.name, args: item.args };
+  });
+}
+
+function differentialCases(obligation, comparisons) {
+  requireThat(Array.isArray(comparisons) && comparisons.length === obligation.cases.length &&
+    digest(comparisons.map(item => item?.id)) === digest(obligation.cases) &&
+    comparisons.every(item => item && Object.keys(item).sort().join(',') === 'baseOutput,candidateOutput,id' &&
+      item.baseOutput !== undefined && item.candidateOutput !== undefined), 'Invalid differential observations');
+  return comparisons.map(({ id, baseOutput, candidateOutput }) => ({
+    id, status: digest(baseOutput) === digest(candidateOutput) ? 'PASS' : 'FAIL',
+  }));
+}
+
+async function runNodeDifferential({ repo, obligation, claim, base, candidate, manifest, oracle, workspace, temp,
+  signal, deadline, reserveVerification }) {
+  const checkDeadline = Math.min(deadline, Date.now() + obligation.timeoutMs);
+  const baselineWorkspace = join(temp, 'base');
+  const baseManifest = repo.materialize(base, baselineWorkspace);
+  const inputs = nodeDifferentialInputs(oracle, obligation, baseManifest, manifest);
+  await Promise.all([assertMaterialization(baselineWorkspace, baseManifest), assertMaterialization(workspace, manifest)]);
+  reserveVerification?.(checkDeadline - Date.now());
+  const baseline = await evaluateNode({ inputs, obligation, workspace: baselineWorkspace,
+    signal, temp, runName: 'base-run', strictJson: true, deadline: checkDeadline });
+  const current = await evaluateNode({ inputs, obligation, workspace, signal, temp,
+    runName: 'candidate-run', strictJson: true, deadline: checkDeadline });
+  await Promise.all([assertMaterialization(baselineWorkspace, baseManifest), assertMaterialization(workspace, manifest)]);
+  requireThat(Date.now() < checkDeadline, 'Differential verification deadline expired');
+  requireThat([baseline, current].every(run => run.observations.every((item, index) =>
+    item?.id === inputs[index].id && Object.hasOwn(item, 'actual') && item.actual !== undefined)),
+  'Wrong differential observation order or output');
+  const comparisons = inputs.map((input, index) => ({ id: input.id,
+    baseOutput: baseline.observations[index].actual, candidateOutput: current.observations[index].actual }));
+  const cases = differentialCases(obligation, comparisons);
+  const report = readReport({ cases }, obligation);
+  const output = { cases, comparisons };
+  const artifacts = Object.fromEntries(obligation.outputs.map(path => {
+    const contents = Buffer.from(stableJson(output));
+    return [path, { digest: hash(contents), base64: contents.toString('base64') }];
+  }));
+  return { id: obligation.id, ...report, commit: candidate, manifest, level: 'tested',
+    keys: evidenceKeys(obligation, claim, candidate, manifest, evidenceEnvironment(obligation), undefined,
+      { commit: base, manifest: baseManifest }),
+    differential: { base, manifest: baseManifest, comparisons },
+    observation: { stdout: hash(stableJson([baseline.stdout, current.stdout])),
+      stderr: hash(stableJson([baseline.stderr, current.stderr])), exit: 0 },
+    outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])), artifacts };
+}
+
 function historyInputs(oracle, obligation, claim, manifest, deadline) {
   const history = parseHistoryOracle(oracle, { deadline });
   const inputs = nodeInputs(history.cases.map(item => ({ ...item, expected: item.expect })), obligation, claim, manifest);
@@ -154,21 +212,25 @@ async function evaluateLean({ prepared, obligation, timeout, signal, temp }) {
   return { version: 1, method: obligation.method, accepted, stdout, stderr, exit: accepted ? 0 : 1 };
 }
 
-async function evaluateNode({ inputs, obligation, workspace, timeout, signal, temp }) {
-  const evaluatorFile = join(temp, 'evaluate.mjs');
-  const request = join(temp, 'request.json');
+async function evaluateNode({ inputs, obligation, workspace, signal, temp, runName = 'node', strictJson = false, deadline }) {
+  const runDirectory = join(temp, runName);
+  await mkdir(runDirectory);
+  const evaluatorFile = join(runDirectory, 'evaluate.mjs');
+  const request = join(runDirectory, 'request.json');
   await writeFile(evaluatorFile, evaluator, { flag: 'wx' });
   await writeFile(request, JSON.stringify(inputs), { flag: 'wx' });
   const [realTemp, realWorkspace, realEvaluatorFile, realRequest] = await Promise.all(
-    [temp, workspace, evaluatorFile, request].map(path => realpath(path)));
+    [runDirectory, workspace, evaluatorFile, request].map(path => realpath(path)));
   const env = { LANG: 'C', TZ: 'UTC', HOME: realTemp, USERPROFILE: realTemp,
     TMP: realTemp, TEMP: realTemp, TMPDIR: realTemp };
   if (process.platform === 'win32' && process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
+  const executionTimeout = deadline - Date.now();
+  requireThat(executionTimeout > 0, 'Verification deadline expired');
   const { stdout, stderr } = await execute(process.execPath, [
     '--permission', ...[realWorkspace, realEvaluatorFile, realRequest].map(path => '--allow-fs-read=' + path),
-    realEvaluatorFile, realWorkspace, realRequest,
+    realEvaluatorFile, realWorkspace, realRequest, ...(strictJson ? ['--strict-json'] : []),
   ], {
-    cwd: realWorkspace, env, timeout, signal, killSignal: 'SIGKILL', maxBuffer: maxArtifactSize, windowsHide: true,
+    cwd: realWorkspace, env, timeout: executionTimeout, signal, killSignal: 'SIGKILL', maxBuffer: maxArtifactSize, windowsHide: true,
   });
   const observations = JSON.parse(stdout);
   requireThat(Array.isArray(observations) && observations.length === inputs.length, 'Incomplete observations for ' + obligation.id);
@@ -247,13 +309,13 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
 
 function cacheAuthority(journal, attempt, task, obligation) {
   if (!journal || !attempt || task.contract.policy.reuseEvidence !== true ||
-    ['lean-comparator', 'node-history'].includes(obligation.method)) return false;
+    ['lean-comparator', 'node-history', 'node-differential'].includes(obligation.method)) return false;
   const authority = journal.authority(attempt);
   return authority?.active === true && authority.contract === task.approval &&
     authority.policy === digest(task.contract.policy);
 }
 
-async function runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt,
+async function runObligation({ repo, task, obligation, claim, base, commit, oracleRoot, scratch, signal, deadline, journal, attempt,
   reserveVerification, dependencies = [] }) {
   const temp = await mkdtemp(join(scratch, 'check-'));
   try {
@@ -264,6 +326,10 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     await assertMaterialization(workspace, manifest);
     const oracle = JSON.parse(bytes.toString('utf8'));
     requireThat(dependencies.length === (obligation.proofDependencies?.length ?? 0), 'Missing verified proof dependencies');
+    if (obligation.method === 'node-differential') {
+      return await runNodeDifferential({ repo, obligation, claim, base, candidate: commit, manifest, oracle, workspace, temp,
+        signal, deadline, reserveVerification });
+    }
     const history = obligation.method === 'node-history';
     const started = Date.now();
     const checkDeadline = Math.min(deadline, started + obligation.timeoutMs);
@@ -290,7 +356,10 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     if (!raw) {
       const evaluate = obligation.method === 'lean-comparator' ? evaluateLean : evaluateNode;
       if (!history) reserveVerification?.(timeout);
-      raw = await evaluate({ prepared, inputs: prepared.inputs, obligation, workspace, timeout, signal, temp });
+      const executionDeadline = history ? checkDeadline : Math.min(deadline, Date.now() + timeout);
+      raw = obligation.method === 'lean-comparator'
+        ? await evaluate({ prepared, inputs: prepared.inputs, obligation, workspace, timeout, signal, temp })
+        : await evaluate({ prepared, inputs: prepared.inputs, obligation, workspace, signal, temp, deadline: executionDeadline });
       await assertMaterialization(workspace, manifest);
       result = presentEvidence(raw, { obligation, claim, commit, manifest, cases: prepared.cases, prepared, deadline: checkDeadline });
       remember = true;
@@ -311,7 +380,7 @@ export async function verify({ repo, task, base, candidate, oracleRoot, scratch,
     signal?.throwIfAborted();
     const claim = task.plan.claims.find(claim => claim.id === obligation.claim);
     const commit = subjectFor(obligation, base, candidate);
-    const result = await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt,
+    const result = await runObligation({ repo, task, obligation, claim, base, commit, oracleRoot, scratch, signal, deadline, journal, attempt,
       reserveVerification, dependencies: proofDependencies?.get(obligation.id) });
     results.push(result);
     if (result.status !== obligation.expect || (obligation.expect === 'FAIL' && result.witness !== obligation.witness)) {
@@ -329,7 +398,7 @@ export async function checkFeedback({ repo, task, name, base, candidate, oracleR
   requireThat(obligation, 'Unknown approved check ' + name);
   const claim = task.plan.claims.find(item => item.id === obligation.claim);
   const commit = subjectFor(obligation, base, candidate);
-  const { status, witness } = await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline,
+  const { status, witness } = await runObligation({ repo, task, obligation, claim, base, commit, oracleRoot, scratch, signal, deadline,
     reserveVerification, dependencies: proofDependencies?.get(name) });
   return witness ? status + ' (' + witness + ')' : status;
 }
@@ -353,6 +422,24 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
       const subject = subjectFor(obligation, base, candidate);
       const manifest = restrictManifest(manifests.get(subject), obligation.inputPaths);
       const dependencies = proofDependencies?.get(obligation.id);
+      let keys;
+      if (obligation.method === 'node-differential') {
+        const baselineManifest = manifests.get(base);
+        requireThat(result.differential?.base === base && baselineManifest &&
+          digest(result.differential.manifest) === digest(baselineManifest), 'Differential baseline identity mismatch');
+        const comparisons = result.differential.comparisons;
+        const cases = differentialCases(obligation, comparisons);
+        const report = readReport({ cases }, obligation);
+        requireThat(report.status === result.status && report.witness === result.witness &&
+          digest(result.cases) === digest(cases), 'Differential verdict mismatch');
+        if (obligation.outputs.includes('cases.json')) {
+          const artifact = result.artifacts?.['cases.json'];
+          const expected = Buffer.from(stableJson({ cases, comparisons }));
+          requireThat(artifact && Buffer.from(artifact.base64, 'base64').equals(expected), 'Differential artifact mismatch');
+        }
+        keys = evidenceKeys(obligation, claim, subject, manifest, evidenceEnvironment(obligation), undefined,
+          { commit: base, manifest: baselineManifest });
+      }
       if (obligation.method === 'lean-comparator') {
         requireThat(digest(result.proof?.modules ?? []) === digest(obligation.leanModules ?? []), 'Stale Lean module evidence');
       }
@@ -364,7 +451,8 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
           'Stale linked proof source for ' + obligation.id);
       }
       requireThat(result.commit === subject && digest(result.manifest) === digest(manifest) &&
-        digest(result.keys) === digest(evidenceKeys(obligation, claim, subject, manifest, evidenceEnvironment(obligation), dependencies)),
+        digest(result.keys) === digest(keys ?? evidenceKeys(obligation, claim, subject, manifest,
+          evidenceEnvironment(obligation), dependencies)),
       'Stale evidence for ' + obligation.id);
       const report = readReport({ cases: result.cases }, obligation);
       requireThat(report.status === result.status && report.witness === result.witness, 'Receipt verdict mismatch');

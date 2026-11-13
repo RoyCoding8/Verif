@@ -6,4 +6,4 @@ package verityRefinement where
 
 @[default_target]
 lean_lib VerityRefinement where
-  roots := #[`RefinementContract, `FiniteModel, `FiniteWitness, `DelegationLaw, `AttemptBudgetLaw, `PromotionLaw, `HistoryLaw]
+  roots := #[`RefinementContract, `FiniteModel, `FiniteWitness, `DelegationLaw, `AttemptBudgetLaw, `PromotionLaw, `HistoryLaw, `NodeDifferential]

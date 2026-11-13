@@ -21,9 +21,12 @@ async function catalogFor(root, files) {
     const records = JSON.parse(bytes.toString('utf8'));
     const identity = { file, digest: hash(bytes) };
     if (Array.isArray(records)) {
-      requireThat(records.length > 0 && records.every(record => text(record?.id)), 'Missing oracle cases');
+      requireThat(records.length > 0 && records.every(record => text(record?.id)) &&
+        records.every(record => Object.hasOwn(record, 'expected') === Object.hasOwn(records[0], 'expected')),
+      'Missing or mixed oracle cases');
       const inputs = records.map(({ id, module, name, args }) => ({ id, module, name, args }));
-      return [file, { ...identity, cases: records.map(record => record.id), inputs }];
+      return [file, { ...identity, cases: records.map(record => record.id), inputs,
+        ...(Object.hasOwn(records[0], 'expected') ? {} : { method: 'node-differential' }) }];
     }
     if (records && Object.hasOwn(records, 'samples')) {
       const cases = expandSampledCases(records);
@@ -67,6 +70,7 @@ export async function proposeTask({ repository, oracleRoot, scratch, draft, work
       'Use lean-comparator for a formal Lean claim with an approved theorem and challenge. Set its expected verdict to PASS.',
       'Use node-property for an approved seeded property oracle whose catalog entry has a sample count.',
       'Use node-history for an approved concurrent history oracle whose catalog entry has call phases.',
+      'Use node-differential for ordinary cases with no expected outputs; it compares a fresh base execution with the exact candidate.',
       'The plan needs a positive candidate obligation for each claim. A FAIL obligation must name its expected failing case ID.',
       'Supported optional output: cases.json. Budget in milliseconds: ' + draft.policy.budgetMs + '.',
       'Approved oracle choices and inputs: ' + JSON.stringify([...catalog.values()].map(({ file, inputs }) => ({ file, inputs }))),
@@ -88,7 +92,7 @@ export async function proposeTask({ repository, oracleRoot, scratch, draft, work
     const obligations = proposed.obligations.map(({ oracleFile, leanModules: _proposedModules, ...fields }) => {
       const oracle = catalog.get(oracleFile);
       requireThat(oracle, 'Planner selected an unapproved oracle ' + oracleFile);
-      const special = ['lean-comparator', 'node-property', 'node-history'].includes(fields.method) ? fields.method : undefined;
+      const special = ['lean-comparator', 'node-property', 'node-history', 'node-differential'].includes(fields.method) ? fields.method : undefined;
       requireThat(oracle.method === special, 'Oracle format does not match method for ' + fields.id);
       return { ...fields, oracle: { file: oracle.file, digest: oracle.digest }, cases: oracle.cases,
         ...(oracle.leanModules?.length ? { leanModules: oracle.leanModules } : {}) };

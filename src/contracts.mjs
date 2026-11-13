@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { normalizeModelRoute } from './model-route.mjs';
 
 const levels = new Map([['tested', 0], ['bounded', 1], ['formal', 2]]);
-const methods = new Map([['node-test', 'tested'], ['node-property', 'tested'], ['node-history', 'tested'],
+const methods = new Map([['node-test', 'tested'], ['node-property', 'tested'], ['node-history', 'tested'], ['node-differential', 'tested'],
   ['finite-domain', 'bounded'], ['lean-comparator', 'formal']]);
 
 export function requireThat(condition, message) {
@@ -168,6 +168,8 @@ function normalizeObligation(obligation, claims) {
   requireThat(specification, 'Unknown obligation claim ' + claim);
   const method = obligation.method ?? (specification.required === 'bounded' ? 'finite-domain' : 'node-test');
   requireThat(methods.has(method), 'Unsupported verification method ' + method);
+  requireThat(method !== 'node-differential' || (subject === 'candidate' && expect === 'PASS'),
+    'Node differential obligations require a positive candidate PASS');
   requireThat(subject === 'candidate' || subject === 'base' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(subject), 'Invalid obligation subject');
   requireThat((expect === 'PASS' && witness === null) || (expect === 'FAIL' && text(witness)), 'Invalid expected verdict');
   requireThat(safePath(oracle?.file) && oracle.file.endsWith('.json') &&
@@ -204,6 +206,8 @@ function normalizeObligation(obligation, claims) {
     'Input projection requires unique file paths and a Node verification method');
     normalized.inputPaths = [...inputPaths].sort();
   }
+  requireThat(method !== 'node-differential' || !Object.hasOwn(obligation, 'inputPaths'),
+    'Node differential obligations require the full snapshot');
   if (Object.hasOwn(obligation, 'proofDependencies')) {
     requireThat(method === 'lean-comparator' && subject === 'candidate' && Array.isArray(obligation.proofDependencies) &&
       obligation.proofDependencies.length > 0, 'Proof dependencies require a candidate Lean obligation');
@@ -328,11 +332,12 @@ export function approvedTask(input) {
   return { contract, plan, approval };
 }
 
-export function evidenceKeys(obligation, claim, subject, manifest, environment, proofDependencies) {
+export function evidenceKeys(obligation, claim, subject, manifest, environment, proofDependencies, baseline) {
   const run = digest({
     version: 1, method: obligation.method, oracle: obligation.oracle, cases: obligation.cases,
     timeoutMs: obligation.timeoutMs, ...evidenceSubject(obligation, subject, manifest), environment,
     ...(obligation.proofDependencies ? { proofDependencies } : {}),
+    ...(baseline ? { baseline } : {}),
   });
   return { run, authorization: digest({
     version: 1, run, obligation: obligation.id, claim, expect: obligation.expect,

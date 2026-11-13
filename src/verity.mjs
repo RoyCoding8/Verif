@@ -95,6 +95,7 @@ function applyPrepared(journal, repo, id, signal) {
       if (digest(changedPaths) !== digest(originalPaths)) throw new Refusal('Integration changed the approved path set');
       if (repo.tree(candidate) !== next.tree) throw new Refusal('Promotion tree differs from the checked tree');
       const subjects = new Set(task.plan.obligations.map(o => subjectFor(o, base, candidate)));
+      if (task.plan.obligations.some(o => o.method === 'node-differential')) subjects.add(base);
       const manifests = new Map([...subjects].map(subject => [subject, repo.manifest(subject === candidate ? op.next : subject)]));
       let proofDependencies;
       try {

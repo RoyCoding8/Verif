@@ -3,6 +3,13 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
+function jsonOutput(output, label) {
+  const json = JSON.stringify(output);
+  const value = json === undefined ? undefined : JSON.parse(json);
+  if (json === undefined || !isDeepStrictEqual(output, value)) throw new Error('Operation output must be JSON: ' + label);
+  return value;
+}
+
 async function captureHistory(factory, args, phases) {
   const service = await factory(...args);
   let event = 0;
@@ -16,12 +23,7 @@ async function captureHistory(factory, args, phases) {
       history.push(call);
       const finish = output => {
         call.response = event++;
-        const json = JSON.stringify(output);
-        const value = json === undefined ? undefined : JSON.parse(json);
-        if (json === undefined || !isDeepStrictEqual(output, value)) {
-          throw new Error('Operation output must be JSON: ' + operation);
-        }
-        call.output = value;
+        call.output = jsonOutput(output, operation);
       };
       const result = service[operation](input);
       finish(result != null && typeof result.then === 'function' ? await result : result);
@@ -31,13 +33,14 @@ async function captureHistory(factory, args, phases) {
   return history;
 }
 
-const [workspace, request] = process.argv.slice(2);
+const [workspace, request, mode] = process.argv.slice(2);
+const strictJson = mode === '--strict-json';
 const cases = JSON.parse(await readFile(request, 'utf8'));
 const observations = [];
 for (const { id, module, name, args, calls } of cases) {
   const exports = await import(pathToFileURL(join(workspace, module)));
   if (typeof exports[name] !== 'function') throw new Error('Required export is missing: ' + name);
-  const actual = calls ? await captureHistory(exports[name], args, calls) : await exports[name](...args);
-  observations.push({ id, actual });
+  const output = calls ? await captureHistory(exports[name], args, calls) : await exports[name](...args);
+  observations.push({ id, actual: strictJson && !calls ? jsonOutput(output, name) : output });
 }
 process.stdout.write(JSON.stringify(observations));
