@@ -19,6 +19,8 @@ The `Evaluate Pi reservation changes` workflow runs paired normal and adversaria
 
 The manifest contains `repository`, `oracles`, `journal`, `scratch`, `maxWorkers`, and `tasks`. Paths are relative to the manifest. The example builds the task records in `examples/setup.mjs`. Store the manifest, oracle files, journal, and protected repository under controller control.
 
+Set `orthogonalOnly` to `true` to dispatch tasks together only when their approved write scopes and candidate verification inputs are independent. A full-tree candidate check runs alone in this mode.
+
 1. Run `node src/cli.mjs plan manifest.json` to inspect the proposed contract, coverage, and obligations.
 2. Review the plan and set each task's `approval` to the displayed digest when you approve it.
 3. Run `node src/cli.mjs run manifest.json`.

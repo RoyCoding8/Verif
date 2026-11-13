@@ -73,6 +73,26 @@ test('parallel candidates integrate against current head and unlock the dependen
   assert.deepEqual(replay, results);
 });
 
+test('orthogonal scheduling dispatches projected siblings together and serializes overlapping inputs', async t => {
+  for (const overlap of [false, true]) {
+    const settings = await fixture(t);
+    const [reserve, messages] = settings.tasks;
+    const tasks = [reserve, messages].map(task => approve({ ...task, obligations: task.obligations.map(obligation =>
+      obligation.subject !== 'candidate' ? obligation : { ...obligation,
+        inputPaths: [...task.scope.write, ...(overlap && task.id === messages.id ? reserve.scope.write : [])] }) }));
+    let active = 0;
+    let peak = 0;
+    const results = await runTasks({ ...settings, tasks, orthogonalOnly: true, worker: async job => {
+      peak = Math.max(peak, ++active);
+      await setTimeout(30);
+      await fixtureWorker(job);
+      active--;
+    } });
+    assert.deepEqual(results.map(result => result.status), ['promoted', 'promoted'], JSON.stringify(results));
+    assert.equal(peak, overlap ? 1 : 2);
+  }
+});
+
 test('requeue cannot restore an attempt spent before a controller interruption', async t => {
   const settings = await fixture(t);
   const task = settings.tasks[0];

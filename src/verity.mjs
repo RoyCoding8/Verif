@@ -55,6 +55,17 @@ function requirePrerequisites(repo, commit, prerequisites) {
   }
 }
 
+function orthogonal(left, right) {
+  const overlap = (one, two) => one.some(path => within(path, two)) || two.some(path => within(path, one));
+  const candidateInputs = task => task.plan.obligations.filter(item => item.subject === 'candidate').map(item => item.inputPaths);
+  const leftInputs = candidateInputs(left);
+  const rightInputs = candidateInputs(right);
+  const leftWrites = left.contract.scope.write;
+  const rightWrites = right.contract.scope.write;
+  return leftInputs.every(Boolean) && rightInputs.every(Boolean) && !overlap(leftWrites, rightWrites) &&
+    !overlap(leftWrites, rightInputs.flat()) && !overlap(rightWrites, leftInputs.flat());
+}
+
 function rollbackTarget(repo, journal, repository, contract, head) {
   const previous = journal.getOperation(contract.revertOperation);
   if (!(previous?.status === 'promoted' && previous.ref === contract.policy.ref &&
@@ -274,10 +285,11 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
 }
 
 export async function runTasks({
-  repository, journalPath, oracleRoot, scratch, tasks: inputs, maxWorkers = 2, worker = runPiWorker, signal, onEvent,
+  repository, journalPath, oracleRoot, scratch, tasks: inputs, maxWorkers = 2, orthogonalOnly = false, worker = runPiWorker, signal, onEvent,
 }) {
   requireThat(Array.isArray(inputs) && inputs.length > 0, 'No tasks supplied');
   requireThat(Number.isSafeInteger(maxWorkers) && maxWorkers > 0 && maxWorkers <= 32, 'Invalid worker limit');
+  requireThat(typeof orthogonalOnly === 'boolean', 'Invalid orthogonal scheduling setting');
   const tasks = inputs.map(approvedTask);
   validateGraph(tasks);
   repository = realpathSync(resolve(repository));
@@ -318,6 +330,7 @@ export async function runTasks({
       for (const [id, task] of pending) {
         if (running.size === maxWorkers) break;
         if (!task.contract.dependencies.every(dependency => completed.has(dependency))) continue;
+        if (orthogonalOnly && [...running.keys()].some(active => !orthogonal(task, byId.get(active)))) continue;
         pending.delete(id);
         if (task.contract.dependencies.some(dependency => completed.get(dependency).status !== 'promoted')) {
           const result = { id, status: 'blocked', reason: 'Prerequisite was not promoted' };

@@ -91,6 +91,7 @@ async function main() {
     scratch,
     tasks: manifest.tasks,
     maxWorkers: manifest.maxWorkers,
+    orthogonalOnly: manifest.orthogonalOnly,
   };
   if (command === 'propose') {
     requireThat(Array.isArray(manifest.tasks) && manifest.tasks.length > 0, 'Missing tasks');
