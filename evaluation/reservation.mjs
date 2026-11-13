@@ -157,10 +157,14 @@ async function runLiveReservation(provider, modelId, trialCount) {
   return { provider, model: modelId, trialsPerChallenge: trials, budgetMs, ...results };
 }
 
+export function hasLiveCandidate(results) {
+  return [results.normal, results.adversarial].some(challenge => challenge.rows.some(row => row.correct !== null));
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 4 || args[0] !== '--live')) throw new Error('Expected --live <provider> <model> <trials>');
   const results = args.length ? await runLiveReservation(...args.slice(1)) : await runScriptedReservation();
   console.log(JSON.stringify(results, null, 2));
-  if (args.length && Object.values(results.counts).every(counts => counts.noCandidate === results.trials)) process.exitCode = 1;
+  if (args.length && !hasLiveCandidate(results)) process.exitCode = 1;
 }
