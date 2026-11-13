@@ -121,13 +121,16 @@ async function evaluateNode({ inputs, obligation, workspace, timeout, signal, te
   const request = join(temp, 'request.json');
   await writeFile(evaluatorFile, evaluator, { flag: 'wx' });
   await writeFile(request, JSON.stringify(inputs), { flag: 'wx' });
-  const env = { LANG: 'C', TZ: 'UTC', HOME: temp, USERPROFILE: temp, TMP: temp, TEMP: temp, TMPDIR: temp };
+  const [realTemp, realWorkspace, realEvaluatorFile, realRequest] = await Promise.all(
+    [temp, workspace, evaluatorFile, request].map(path => realpath(path)));
+  const env = { LANG: 'C', TZ: 'UTC', HOME: realTemp, USERPROFILE: realTemp,
+    TMP: realTemp, TEMP: realTemp, TMPDIR: realTemp };
   if (process.platform === 'win32' && process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-  const readPaths = await Promise.all([workspace, evaluatorFile, request].map(path => realpath(path)));
   const { stdout, stderr } = await execute(process.execPath, [
-    '--permission', ...readPaths.map(path => '--allow-fs-read=' + path), evaluatorFile, workspace, request,
+    '--permission', ...[realWorkspace, realEvaluatorFile, realRequest].map(path => '--allow-fs-read=' + path),
+    realEvaluatorFile, realWorkspace, realRequest,
   ], {
-    cwd: workspace, env, timeout, signal, killSignal: 'SIGKILL', maxBuffer: maxArtifactSize, windowsHide: true,
+    cwd: realWorkspace, env, timeout, signal, killSignal: 'SIGKILL', maxBuffer: maxArtifactSize, windowsHide: true,
   });
   const observations = JSON.parse(stdout);
   requireThat(Array.isArray(observations) && observations.length === inputs.length, 'Incomplete observations for ' + obligation.id);
