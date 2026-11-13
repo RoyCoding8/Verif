@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { assertExhaustiveDomain, compose, digest, evidenceKeys, hash, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
 import { judgeLean, leanEnvironment } from './lean-judge.mjs';
+import { proofSources } from './proof-dependencies.mjs';
 
 const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
@@ -12,7 +13,7 @@ const environment = { runtime: process.version, platform: process.platform, arch
 const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './contracts.mjs'].map(async path =>
   hash(await readFile(new URL(path, import.meta.url))))));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
-  adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs'].map(async path =>
+  adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs', './proof-dependencies.mjs'].map(async path =>
     hash(await readFile(new URL(path, import.meta.url)))))) };
 
 function environmentFor(plan) {
@@ -98,19 +99,21 @@ function nodeInputs(cases, obligation, claim, manifest) {
   return inputs;
 }
 
-async function prepareOracle(oracle, obligation, claim, workspace, manifest) {
+async function prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies) {
   if (obligation.method !== 'lean-comparator') return { cases: oracle, inputs: nodeInputs(oracle, obligation, claim, manifest) };
   const parsed = parseLeanOracle(oracle);
   requireThat(parsed.theorem === obligation.cases[0], 'Lean theorem does not match obligation ' + obligation.id);
-  requireThat(manifest.files.some(file => file.path === parsed.solution), 'Missing Lean solution: ' + parsed.solution);
-  const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await regularFile(workspace, parsed.solution));
-  return { ...parsed, source };
+  const proof = proofSources(parsed.theorem, parsed.solution, dependencies, manifest);
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+  const source = (await Promise.all(proof.sources.map(async ({ path }) => decoder.decode(await regularFile(workspace, path))))).join('\n\n');
+  return { ...parsed, source, proof, dependencies };
 }
 
 async function evaluateLean({ prepared, obligation, timeout, signal, temp }) {
-  const { theorem, challenge, source } = prepared;
+  const { theorem, challenge, source, proof } = prepared;
+  const target = proof.theorems.length > 1 ? { theorems: proof.theorems } : { theorem };
   const { accepted, stdout, stderr } = await judgeLean({
-    challenge, solution: source, theorem, timeoutMs: timeout, signal, scratch: resolve(temp),
+    challenge, solution: source, ...target, timeoutMs: timeout, signal, scratch: resolve(temp),
   });
   return { version: 1, method: obligation.method, accepted, stdout, stderr, exit: accepted ? 0 : 1 };
 }
@@ -167,7 +170,9 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
   }));
   return {
     id: obligation.id, ...report, commit, manifest, level,
-    keys: evidenceKeys(obligation, claim, commit, manifest, evidenceEnvironment(obligation)),
+    keys: evidenceKeys(obligation, claim, commit, manifest, evidenceEnvironment(obligation), prepared.dependencies),
+    ...(prepared.proof ? { proof: prepared.proof } : {}),
+    ...(obligation.proofDependencies ? { proofDependencies: prepared.dependencies } : {}),
     observation: { stdout: hash(raw.stdout), stderr: hash(raw.stderr), exit: raw.exit },
     outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])),
     artifacts,
@@ -181,7 +186,7 @@ function cacheAuthority(journal, attempt, task, obligation) {
     authority.policy === digest(task.contract.policy);
 }
 
-async function runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt }) {
+async function runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt, dependencies = [] }) {
   const temp = await mkdtemp(join(scratch, 'check-'));
   try {
     const workspace = join(temp, 'subject');
@@ -190,7 +195,8 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     const manifest = repo.materialize(commit, workspace);
     await assertMaterialization(workspace, manifest);
     const oracle = JSON.parse(bytes.toString('utf8'));
-    const prepared = await prepareOracle(oracle, obligation, claim, workspace, manifest);
+    requireThat(dependencies.length === (obligation.proofDependencies?.length ?? 0), 'Missing verified proof dependencies');
+    const prepared = await prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies);
     const timeout = Math.min(obligation.timeoutMs, deadline - Date.now());
     requireThat(timeout > 0, 'Task budget expired');
     const cacheEnabled = cacheAuthority(journal, attempt, task, obligation);
@@ -222,28 +228,30 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
   }
 }
 
-export async function verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt }) {
+export async function verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt, proofDependencies }) {
   const results = [];
   for (const obligation of task.plan.obligations) {
     signal?.throwIfAborted();
     const claim = task.plan.claims.find(claim => claim.id === obligation.claim);
     const commit = subjectFor(obligation, base, candidate);
-    results.push(await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt }));
+    results.push(await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt,
+      dependencies: proofDependencies?.get(obligation.id) }));
   }
   const assurance = compose(task.plan, results);
   return { version: 1, contract: task.approval, plan: task.contract.plan, base, candidate, environment: environmentFor(task.plan), results, assurance };
 }
 
-export async function checkFeedback({ repo, task, name, base, candidate, oracleRoot, scratch, signal, deadline }) {
+export async function checkFeedback({ repo, task, name, base, candidate, oracleRoot, scratch, signal, deadline, proofDependencies }) {
   const obligation = task.plan.obligations.find(item => item.id === name);
   requireThat(obligation, 'Unknown approved check ' + name);
   const claim = task.plan.claims.find(item => item.id === obligation.claim);
   const commit = subjectFor(obligation, base, candidate);
-  const { status, witness } = await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline });
+  const { status, witness } = await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline,
+    dependencies: proofDependencies?.get(name) });
   return witness ? status + ' (' + witness + ')' : status;
 }
 
-export function decide({ task, receipt, authority, base, candidate, manifests, changedPaths, now, deadline }) {
+export function decide({ task, receipt, authority, base, candidate, manifests, changedPaths, now, deadline, proofDependencies }) {
   try {
     const { contract, plan, approval } = task;
     requireThat(authority?.active && authority.contract === approval && authority.policy === digest(contract.policy), 'Inactive or stale authority');
@@ -260,8 +268,16 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
       const claim = plan.claims.find(claim => claim.id === obligation.claim);
       const subject = subjectFor(obligation, base, candidate);
       const manifest = manifests.get(subject);
+      const dependencies = proofDependencies?.get(obligation.id);
+      if (obligation.proofDependencies) {
+        requireThat(dependencies?.length === obligation.proofDependencies.length, 'Missing verified proof dependencies');
+        requireThat(digest(result.proofDependencies) === digest(dependencies), 'Stale proof dependency for ' + obligation.id);
+        const source = result.proof?.sources.at(-1)?.path;
+        requireThat(source && digest(result.proof) === digest(proofSources(obligation.cases[0], source, dependencies, manifest)),
+          'Stale linked proof source for ' + obligation.id);
+      }
       requireThat(result.commit === subject && digest(result.manifest) === digest(manifest) &&
-        digest(result.keys) === digest(evidenceKeys(obligation, claim, subject, manifest, evidenceEnvironment(obligation))),
+        digest(result.keys) === digest(evidenceKeys(obligation, claim, subject, manifest, evidenceEnvironment(obligation), dependencies)),
       'Stale evidence for ' + obligation.id);
       const report = readReport({ cases: result.cases }, obligation);
       requireThat(report.status === result.status && report.witness === result.witness, 'Receipt verdict mismatch');

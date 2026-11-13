@@ -146,7 +146,19 @@ function normalizeObligation(obligation, claims) {
     'Finite-domain obligations must list a case for every input in the declared domain');
   requireThat(method !== 'lean-comparator' || (expect === 'PASS' && cases.length === 1 && leanName(cases[0])),
     'Lean obligations require one named theorem and an expected PASS');
-  return { id: obligation.id, claim, subject, expect, witness, method, oracle, outputs, cases, timeoutMs: obligation.timeoutMs };
+  const normalized = { id: obligation.id, claim, subject, expect, witness, method, oracle, outputs, cases, timeoutMs: obligation.timeoutMs };
+  if (Object.hasOwn(obligation, 'proofDependencies')) {
+    requireThat(method === 'lean-comparator' && subject === 'candidate' && Array.isArray(obligation.proofDependencies) &&
+      obligation.proofDependencies.length > 0, 'Proof dependencies require a candidate Lean obligation');
+    const names = new Set(cases);
+    normalized.proofDependencies = obligation.proofDependencies.map(link => {
+      requireThat(text(link?.task) && text(link.obligation) && leanName(link.theorem) && !names.has(link.theorem),
+        'Invalid or duplicate prerequisite theorem');
+      names.add(link.theorem);
+      return { task: link.task, obligation: link.obligation, theorem: link.theorem };
+    });
+  }
+  return normalized;
 }
 
 export function planVerification(intent) {
@@ -195,6 +207,8 @@ export function makeContract(input, plan) {
   }
   requireThat(Array.isArray(dependencies) && dependencies.every(text) && !dependencies.includes(id) &&
     new Set(dependencies).size === dependencies.length, 'Invalid task dependencies');
+  requireThat(plan.obligations.every(obligation => (obligation.proofDependencies ?? []).every(link => dependencies.includes(link.task))),
+    'Proof dependency must name a direct prerequisite task');
   requireThat(base === 'head-at-dispatch' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(base), 'Invalid task base');
   requireThat(typeof policy?.ref === 'string' && policy.ref.startsWith('refs/heads/'), 'Invalid protected branch');
   requireThat(Number.isSafeInteger(policy.budgetMs) && policy.budgetMs > 0 && policy.budgetMs <= 2_147_483_647, 'Invalid task budget');
@@ -215,10 +229,11 @@ export function approvedTask(input) {
   return { contract, plan, approval };
 }
 
-export function evidenceKeys(obligation, claim, subject, manifest, environment) {
+export function evidenceKeys(obligation, claim, subject, manifest, environment, proofDependencies) {
   const run = digest({
     version: 1, method: obligation.method, oracle: obligation.oracle, cases: obligation.cases,
     timeoutMs: obligation.timeoutMs, subject, manifest, environment,
+    ...(obligation.proofDependencies ? { proofDependencies } : {}),
   });
   return { run, authorization: digest({
     version: 1, run, obligation: obligation.id, claim, expect: obligation.expect,

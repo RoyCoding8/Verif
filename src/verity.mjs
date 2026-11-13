@@ -6,6 +6,7 @@ import { approvedTask, digest, requireThat, within } from './contracts.mjs';
 import { GitRepo } from './git.mjs';
 import { Journal } from './journal.mjs';
 import { runPiWorker } from './pi-worker.mjs';
+import { resolveProofDependencies } from './proof-dependencies.mjs';
 import { checkFeedback, decide, subjectFor, verify } from './verify.mjs';
 
 class Refusal extends Error {}
@@ -68,9 +69,16 @@ function applyPrepared(journal, repo, id, signal) {
       if (repo.tree(candidate) !== repo.tree(op.next)) throw new Refusal('Promotion tree differs from the checked tree');
       const subjects = new Set(task.plan.obligations.map(o => subjectFor(o, base, candidate)));
       const manifests = new Map([...subjects].map(subject => [subject, repo.manifest(subject === candidate ? op.next : subject)]));
+      let proofDependencies;
+      try {
+        proofDependencies = resolveProofDependencies(task, op.receipt.runId, prerequisites, journal);
+      } catch (error) {
+        throw new Refusal(error.message, { cause: error });
+      }
       const decision = decide({
         task, receipt: evidence, authority: journal.authority(op.attempt), base, candidate,
         manifests, changedPaths, now: Date.now(), deadline,
+        proofDependencies,
       });
       if (!decision.promote) throw new Refusal(decision.reason);
       return true;
@@ -133,7 +141,8 @@ async function integrate(context, task, claim, attempt, base, original, deadline
     });
     const paths = repo.changedPaths(head, candidate);
     requireThat(digest(paths) === digest(originalPaths), 'Integration changed the approved path set');
-    const evidence = await verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt });
+    const proofDependencies = resolveProofDependencies(task, runId, prerequisites, journal);
+    const evidence = await verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt, proofDependencies });
     if (repo.readRef(ref) !== head) continue;
     signal.throwIfAborted();
     const bundle = { repository, runId, claim, task, evidence, base, original, candidate, deadline, prerequisites };
@@ -198,6 +207,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
             const checkSignal = options?.signal ? AbortSignal.any([signal, options.signal]) : signal;
             return await checkFeedback({
               repo, task, name, base, candidate: snapshot, oracleRoot, scratch, signal: checkSignal, deadline,
+              proofDependencies: resolveProofDependencies(task, runId, prerequisites, journal),
             });
           } catch (error) {
             return 'Feedback failed: ' + error.message;

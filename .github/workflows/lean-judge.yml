@@ -43,6 +43,6 @@ jobs:
         env:
           VERITY_LEAN_SMOKE: "1"
       - name: Check proof repair and protected-branch promotion
-        run: node --test test/lean-obligation.test.mjs
+        run: node --test test/lean-obligation.test.mjs test/linked-lean.test.mjs
         env:
           VERITY_LEAN_SMOKE: "1"
