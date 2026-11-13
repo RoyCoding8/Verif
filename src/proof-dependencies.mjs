@@ -23,10 +23,14 @@ export function resolveProofDependencies(task, runId, prerequisites, journal) {
   return resolved;
 }
 
-export function proofSources(theorem, source, dependencies, manifest) {
+export function proofSources(theorem, source, dependencies, manifest, modules = []) {
   const sources = new Map();
   const theorems = new Set();
   for (const link of dependencies) {
+    for (const module of link.proof.modules ?? []) {
+      requireThat(modules.some(item => item.name === module.name && item.digest === module.digest),
+        'Missing or changed prerequisite Lean module: ' + module.name);
+    }
     for (const name of link.proof.theorems) theorems.add(name);
     for (const input of link.proof.sources) {
       const existing = sources.get(input.path);
@@ -44,5 +48,5 @@ export function proofSources(theorem, source, dependencies, manifest) {
       'Missing or changed prerequisite proof source: ' + path);
     return { path, digest: input.digest };
   });
-  return { theorem, theorems: [...theorems], sources: files };
+  return { theorem, theorems: [...theorems], sources: files, ...(modules.length > 0 ? { modules } : {}) };
 }

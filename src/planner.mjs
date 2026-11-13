@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
-import { digest, hash, makeContract, parseLeanOracle, planVerification, requireThat, safePath, text } from './contracts.mjs';
+import { digest, hash, leanModuleDigests, makeContract, parseLeanOracle, planVerification, requireThat, safePath, text } from './contracts.mjs';
 import { GitRepo } from './git.mjs';
 import { runPiWorker } from './pi-worker.mjs';
 import { expandSampledCases } from './sampled-cases.mjs';
@@ -36,7 +36,8 @@ async function catalogFor(root, files) {
       return [file, { ...identity, cases: inputs.map(record => record.id), inputs, method: 'node-history' }];
     }
     const oracle = parseLeanOracle(records);
-    return [file, { ...identity, cases: [oracle.theorem], inputs: oracle, method: 'lean-comparator' }];
+    const leanModules = leanModuleDigests(oracle.modules);
+    return [file, { ...identity, cases: [oracle.theorem], inputs: oracle, method: 'lean-comparator', leanModules }];
   })));
 }
 
@@ -81,12 +82,13 @@ export async function proposeTask({ repository, oracleRoot, scratch, draft, work
     requireThat(stats.isFile() && !stats.isSymbolicLink() && stats.size < 1024 * 1024, 'Invalid plan proposal file');
     const proposed = JSON.parse(await readFile(proposedPath, 'utf8'));
     requireThat(Array.isArray(proposed.obligations), 'No proposed obligations');
-    const obligations = proposed.obligations.map(({ oracleFile, ...fields }) => {
+    const obligations = proposed.obligations.map(({ oracleFile, leanModules: _proposedModules, ...fields }) => {
       const oracle = catalog.get(oracleFile);
       requireThat(oracle, 'Planner selected an unapproved oracle ' + oracleFile);
       const special = ['lean-comparator', 'node-property', 'node-history'].includes(fields.method) ? fields.method : undefined;
       requireThat(oracle.method === special, 'Oracle format does not match method for ' + fields.id);
-      return { ...fields, oracle: { file: oracle.file, digest: oracle.digest }, cases: oracle.cases };
+      return { ...fields, oracle: { file: oracle.file, digest: oracle.digest }, cases: oracle.cases,
+        ...(oracle.leanModules?.length ? { leanModules: oracle.leanModules } : {}) };
     });
     const { approval: previousApproval, ...settings } = draft;
     const intent = { ...settings, criteria: proposed.criteria, claims: proposed.claims, obligations };

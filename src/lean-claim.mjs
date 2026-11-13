@@ -1,6 +1,6 @@
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { hash, parseLeanOracle, requireThat } from './contracts.mjs';
+import { digest, hash, leanModuleDigests, parseLeanOracle, requireThat } from './contracts.mjs';
 
 async function readApproved(root, source, expected) {
   const path = join(root, source);
@@ -25,7 +25,8 @@ export function leanClaimChallenge(binding, theorem, definitions) {
 }
 
 export async function checkLeanClaimOracle(root, binding, obligation, definitions) {
-  const { theorem, challenge } = parseLeanOracle(JSON.parse(await readApproved(root, obligation.oracle.file, obligation.oracle.digest)));
+  const { theorem, challenge, modules } = parseLeanOracle(JSON.parse(await readApproved(root, obligation.oracle.file, obligation.oracle.digest)));
   requireThat(theorem === obligation.cases[0] && challenge === leanClaimChallenge(binding, theorem, definitions),
     'Lean oracle does not prove the bound claim ' + obligation.claim);
+  requireThat(digest(leanModuleDigests(modules)) === digest(obligation.leanModules ?? []), 'Approved Lean module list does not match oracle');
 }

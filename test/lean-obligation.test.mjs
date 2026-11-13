@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { approve, createDemo } from '../examples/setup.mjs';
-import { hash, planVerification } from '../src/contracts.mjs';
+import { hash, leanModuleDigests, planVerification } from '../src/contracts.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { Journal } from '../src/journal.mjs';
 import { proposeTask } from '../src/planner.mjs';
@@ -61,6 +61,47 @@ test('a changed oracle is refused before a proof can affect the protected ref', 
   assert.equal(result.status, 'refused');
   assert.match(JSON.stringify(result), /Oracle digest changed for proof/);
   assert.equal(repo.readRef(policy.ref), head);
+});
+
+test('approved Lean helper source is bound to the plan, proof and final receipt', {
+  skip: process.env.VERITY_LEAN_SMOKE !== '1',
+}, async t => {
+  const settings = await fixture(t);
+  const repo = new GitRepo(settings.repository);
+  const head = repo.readRef(policy.ref);
+  const helper = { name: 'VerityWarranty', source: 'def permitted (n : Nat) : Prop := n + 0 = n\n' };
+  const challenge = 'import VerityWarranty\n\ntheorem Warranty.addZero (n : Nat) : permitted n := by rfl\n';
+  const packed = JSON.stringify({ ...oracle, challenge, modules: [helper] });
+  await writeFile(join(settings.oracleRoot, 'proof.json'), packed);
+  const checked = { ...obligation, oracle: { ...obligation.oracle, digest: hash(packed) }, leanModules: leanModuleDigests([helper]) };
+  const draft = { ...intent, obligations: [checked], oracleFiles: ['proof.json'], policy: { ...policy, maxRepairs: 0 } };
+  const proposal = await proposeTask({ ...settings, draft, worker: async ({ workspace, scope }) => {
+    await writeFile(join(workspace, scope.write[0]), JSON.stringify({ ...intent,
+      obligations: [{ ...checked, oracleFile: 'proof.json', leanModules: [{ name: 'VerityFake', digest: '0'.repeat(64) }] }] }));
+  } });
+  assert.deepEqual(proposal.plan.obligations[0].leanModules, checked.leanModules);
+  const worker = ({ workspace }) => writeFile(join(workspace, solution), challenge);
+  const [refused] = await runTasks({ ...settings, worker, tasks: [approve({ ...draft,
+    obligations: [{ ...checked, leanModules: [{ name: helper.name, digest: '0'.repeat(64) }] }] })] });
+  assert.match(refused.reason, /Approved Lean module list does not match oracle/);
+  assert.equal(repo.readRef(policy.ref), head);
+  const [accepted] = await runTasks({ ...settings, worker, tasks: [approve({ ...proposal.intent, revision: 2 })] });
+  assert.equal(accepted.status, 'promoted', JSON.stringify(accepted));
+  const journal = new Journal(settings.journalPath);
+  try {
+    const operation = journal.getOperation(accepted.operation);
+    const { task, evidence: receipt, base, candidate, deadline } = operation.receipt;
+    assert.deepEqual(receipt.results[0].proof.modules, checked.leanModules);
+    const gate = { task, receipt, base, candidate, deadline, now: deadline - 1,
+      authority: { active: true, contract: operation.contract, policy: operation.policy },
+      manifests: new Map([[candidate, repo.manifest(candidate)]]), changedPaths: [solution] };
+    assert.deepEqual(decide(gate), { promote: true });
+    const corrupted = structuredClone(receipt);
+    corrupted.results[0].proof.modules[0].digest = '0'.repeat(64);
+    assert.deepEqual(decide({ ...gate, receipt: corrupted }), { promote: false, reason: 'Stale Lean module evidence' });
+  } finally {
+    journal.close();
+  }
 });
 
 test('a rejected proof triggers repair and only the accepted proof advances the protected ref', {

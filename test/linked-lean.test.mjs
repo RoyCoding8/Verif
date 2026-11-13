@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { approve, createDemo } from '../examples/setup.mjs';
-import { hash } from '../src/contracts.mjs';
+import { hash, leanModuleDigests } from '../src/contracts.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { Journal } from '../src/journal.mjs';
 import { resolveProofDependencies } from '../src/proof-dependencies.mjs';
@@ -20,10 +20,12 @@ async function fixture(t, mode) {
   const settings = await createDemo(root);
   const oracleRoot = join(root, 'oracles');
   await mkdir(oracleRoot);
+  const helper = { name: 'VerityLinked', source: 'def linkedResult (n : Nat) : Prop := n + 0 = n\n' };
   async function task(id, source, challenge, dependencies = [], links) {
     const theorem = 'Link.' + id;
     const file = id + '.json';
-    const oracle = JSON.stringify({ theorem, solution: source, challenge });
+    const modules = mode === 'module-changed' && links ? [{ ...helper, source: helper.source + '-- changed\n' }] : [helper];
+    const oracle = JSON.stringify({ theorem, solution: source, challenge, modules });
     await writeFile(join(oracleRoot, file), oracle);
     return { id, revision: 1, goal: 'Prove ' + theorem, dependencies,
       scope: { read: ['Up.lean'], write: mode === 'changed' && links ? [source, 'Up.lean'] : [source], forbidden: [] },
@@ -31,7 +33,8 @@ async function fixture(t, mode) {
       criteria: [{ id, description: theorem, claims: [id] }],
       claims: [{ id, statement: theorem, required: 'formal' }],
       obligations: [{ id, claim: id, subject: 'candidate', expect: 'PASS', method: 'lean-comparator', timeoutMs: 110_000,
-        cases: [theorem], oracle: { file, digest: hash(oracle) }, ...(links ? { proofDependencies: links } : {}) }] };
+        cases: [theorem], oracle: { file, digest: hash(oracle) }, leanModules: leanModuleDigests(modules),
+        ...(links ? { proofDependencies: links } : {}) }] };
   }
   const first = await task('upstream', 'Up.lean', upstream);
   const sealed = mode === 'drift'
@@ -51,7 +54,7 @@ test('a linked proof plan must name a direct task prerequisite', async t => {
 test('controller composes promoted Lean evidence and refuses missing, changed, or incompatible prerequisites', {
   skip: process.env.VERITY_LEAN_SMOKE !== '1',
 }, async t => {
-  for (const mode of ['valid', 'missing', 'changed', 'drift']) {
+  for (const mode of ['valid', 'missing', 'changed', 'drift', 'module-changed']) {
     await t.test(mode, async t => {
       const { settings, first, second } = await fixture(t, mode);
       const tasks = [approve(first), approve(second)];
@@ -63,7 +66,8 @@ test('controller composes promoted Lean evidence and refuses missing, changed, o
       assert.equal(results[0].status, 'promoted', JSON.stringify(results));
       const head = new GitRepo(settings.repository).readRef('refs/heads/protected');
       if (mode !== 'valid') {
-        const reasons = { missing: /lacks the approved theorem/, changed: /changed prerequisite proof source/, drift: /Unexpected verdict/ };
+        const reasons = { missing: /lacks the approved theorem/, changed: /changed prerequisite proof source/, drift: /Unexpected verdict/,
+          'module-changed': /Missing or changed prerequisite Lean module/ };
         assert.equal(results[1].status, 'refused', JSON.stringify(results));
         assert.match(results[1].reason, reasons[mode]);
         assert.equal(head, results[0].commit);

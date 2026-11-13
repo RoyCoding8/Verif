@@ -44,17 +44,29 @@ function leanClaim(binding) {
   return { source, definitionDigest, domain, precondition, guarantee, implementation, obligation, assumptions: [...binding.assumptions].sort() };
 }
 
+function validLeanModuleName(name) {
+  return typeof name === 'string' && /^Verity[A-Za-z0-9_]+$/.test(name) && name.length <= 80;
+}
+
+function orderLeanModules(first, second) {
+  return first.name < second.name ? -1 : Number(first.name > second.name);
+}
+
 export function normalizeLeanModules(modules = []) {
   requireThat(Array.isArray(modules) && modules.length <= 16, 'Lean accepts at most 16 approved local modules');
   const names = new Set();
   return [...modules].map(module => {
     const { name, source } = module ?? {};
-    requireThat(typeof name === 'string' && /^Verity[A-Za-z0-9_]+$/.test(name) && name.length <= 80 &&
+    requireThat(validLeanModuleName(name) &&
       !names.has(name.toLowerCase()) && text(source) && source.isWellFormed() &&
       Buffer.byteLength(source, 'utf8') <= 2 * 1024 * 1024, 'Invalid or duplicate approved Lean module');
     names.add(name.toLowerCase());
     return { name, source };
-  }).sort((first, second) => first.name < second.name ? -1 : Number(first.name > second.name));
+  }).sort(orderLeanModules);
+}
+
+export function leanModuleDigests(modules = []) {
+  return modules.map(({ name, source }) => ({ name, digest: hash(source) }));
 }
 
 export function parseLeanOracle(oracle) {
@@ -172,6 +184,19 @@ function normalizeObligation(obligation, claims) {
   requireThat(method !== 'lean-comparator' || (expect === 'PASS' && cases.length === 1 && leanName(cases[0])),
     'Lean obligations require one named theorem and an expected PASS');
   const normalized = { id: obligation.id, claim, subject, expect, witness, method, oracle, outputs, cases, timeoutMs: obligation.timeoutMs };
+  if (Object.hasOwn(obligation, 'leanModules')) {
+    const { leanModules } = obligation;
+    requireThat(method === 'lean-comparator' && Array.isArray(leanModules) && leanModules.length > 0 && leanModules.length <= 16,
+      'Only Lean obligations can name approved local modules');
+    const names = new Set();
+    normalized.leanModules = [...leanModules].map(module => {
+      const { name, digest } = module ?? {};
+      requireThat(validLeanModuleName(name) && !names.has(name.toLowerCase()) &&
+        typeof digest === 'string' && /^[a-f0-9]{64}$/.test(digest), 'Invalid approved Lean module digest');
+      names.add(name.toLowerCase());
+      return { name, digest };
+    }).sort(orderLeanModules);
+  }
   if (Object.hasOwn(obligation, 'inputPaths')) {
     const { inputPaths } = obligation;
     requireThat(method !== 'lean-comparator' && Array.isArray(inputPaths) && inputPaths.length > 0 &&

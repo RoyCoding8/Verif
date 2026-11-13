@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { lstat, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { assertExhaustiveDomain, compose, digest, evidenceKeys, evidenceSubject, hash, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
+import { assertExhaustiveDomain, compose, digest, evidenceKeys, evidenceSubject, hash, leanModuleDigests, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
 import { judgeLean, leanEnvironment } from './lean-judge.mjs';
 import { leanClaimChallenge, readLeanDefinitions } from './lean-claim.mjs';
 import { proofSources } from './proof-dependencies.mjs';
@@ -18,7 +18,7 @@ const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs',
 const samplingAdapter = hash(await readFile(new URL('./sampled-cases.mjs', import.meta.url)));
 const historyAdapter = hash(await readFile(new URL('./history-check.mjs', import.meta.url)));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
-  adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs', './lean-claim.mjs', './proof-dependencies.mjs'].map(async path =>
+  adapter: digest(await Promise.all(['./verify.mjs', './contracts.mjs', './lean-judge.mjs', './lean-claim.mjs', './proof-dependencies.mjs'].map(async path =>
     hash(await readFile(new URL(path, import.meta.url)))))) };
 
 function environmentFor(plan) {
@@ -137,7 +137,9 @@ async function prepareOracle(oracle, obligation, claim, workspace, manifest, dep
     requireThat(parsed.challenge === leanClaimChallenge(claim.lean, parsed.theorem, definitions),
       'Lean oracle does not prove the bound claim ' + claim.id);
   }
-  const proof = proofSources(parsed.theorem, parsed.solution, dependencies, manifest);
+  const modules = leanModuleDigests(parsed.modules);
+  requireThat(digest(modules) === digest(obligation.leanModules ?? []), 'Approved Lean module list does not match oracle');
+  const proof = proofSources(parsed.theorem, parsed.solution, dependencies, manifest, modules);
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   const source = (await Promise.all(proof.sources.map(async ({ path }) => decoder.decode(await regularFile(workspace, path))))).join('\n\n');
   return { ...parsed, source, proof, dependencies };
@@ -147,7 +149,7 @@ async function evaluateLean({ prepared, obligation, timeout, signal, temp }) {
   const { theorem, challenge, source, proof } = prepared;
   const target = proof.theorems.length > 1 ? { theorems: proof.theorems } : { theorem };
   const { accepted, stdout, stderr } = await judgeLean({
-    challenge, solution: source, ...target, timeoutMs: timeout, signal, scratch: resolve(temp),
+    challenge, solution: source, modules: prepared.modules, ...target, timeoutMs: timeout, signal, scratch: resolve(temp),
   });
   return { version: 1, method: obligation.method, accepted, stdout, stderr, exit: accepted ? 0 : 1 };
 }
@@ -350,11 +352,14 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
       const subject = subjectFor(obligation, base, candidate);
       const manifest = restrictManifest(manifests.get(subject), obligation.inputPaths);
       const dependencies = proofDependencies?.get(obligation.id);
+      if (obligation.method === 'lean-comparator') {
+        requireThat(digest(result.proof?.modules ?? []) === digest(obligation.leanModules ?? []), 'Stale Lean module evidence');
+      }
       if (obligation.proofDependencies) {
         requireThat(dependencies?.length === obligation.proofDependencies.length, 'Missing verified proof dependencies');
         requireThat(digest(result.proofDependencies) === digest(dependencies), 'Stale proof dependency for ' + obligation.id);
         const source = result.proof?.sources.at(-1)?.path;
-        requireThat(source && digest(result.proof) === digest(proofSources(obligation.cases[0], source, dependencies, manifest)),
+        requireThat(source && digest(result.proof) === digest(proofSources(obligation.cases[0], source, dependencies, manifest, obligation.leanModules)),
           'Stale linked proof source for ' + obligation.id);
       }
       requireThat(result.commit === subject && digest(result.manifest) === digest(manifest) &&
