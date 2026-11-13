@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { after, test } from 'node:test';
@@ -78,6 +79,13 @@ test('reports sorted paths and materializes exact blob bytes and executable mode
   assert.deepEqual(bytes, Buffer.from([0, 255, 10]));
   assert.equal(materialized.files[0].digest, crypto.createHash('sha256').update(bytes).digest('hex'));
   assert.equal(materialized.tree, adapter.tree(base));
+});
+
+test('opens a bare Git repository through the operating system temporary path', t => {
+  const root = fs.mkdtempSync(path.join(tmpdir(), 'verity-git-native-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  git(root, 'init', '--bare', '--quiet');
+  assert.equal(new GitRepo(root).readRef('refs/heads/protected'), null);
 });
 
 test('forks without a remote, captures changed workspace bytes, and creates a promotion commit', () => {

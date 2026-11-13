@@ -65,11 +65,11 @@ function refName(value) {
 
 function canonicalRepo(root) {
   const abs = path.resolve(root);
-  const requested = fs.realpathSync(abs);
-  const isBare = run(abs, ['rev-parse', '--is-bare-repository']).trim() === 'true';
-  const repoRoot = isBare ? run(abs, ['rev-parse', '--absolute-git-dir']).trim() : run(abs, ['rev-parse', '--show-toplevel']).trim();
+  const requested = fs.realpathSync.native(abs);
+  const isBare = run(requested, ['rev-parse', '--is-bare-repository']).trim() === 'true';
+  const repoRoot = run(requested, ['rev-parse', isBare ? '--absolute-git-dir' : '--show-toplevel']).trim();
   if (!repoRoot) throw new Error(`Not a Git repository: ${abs}`);
-  const canonicalRoot = fs.realpathSync(repoRoot);
+  const canonicalRoot = fs.realpathSync.native(repoRoot);
   if (canonicalRoot !== requested) throw new Error(`Git repository root does not match requested path: ${abs}`);
   return canonicalRoot;
 }
@@ -126,7 +126,7 @@ function safeDestination(destination) {
   if (abs === path.parse(abs).root) throw new Error('Destination cannot be a filesystem root');
   const parent = path.dirname(abs);
   fs.mkdirSync(parent, { recursive: true });
-  const parentReal = fs.realpathSync(parent);
+  const parentReal = fs.realpathSync.native(parent);
   if (fs.existsSync(abs)) {
     const stat = fs.lstatSync(abs);
     if (!stat.isDirectory() || stat.isSymbolicLink() || fs.readdirSync(abs).length) {
@@ -137,14 +137,14 @@ function safeDestination(destination) {
 }
 
 function protectMetadata(repo, destination) {
-  const gitDir = fs.realpathSync(run(repo, ['rev-parse', '--absolute-git-dir']).trim());
+  const gitDir = fs.realpathSync.native(run(repo, ['rev-parse', '--absolute-git-dir']).trim());
   let target = path.resolve(destination);
   const suffix = [];
   while (!fs.existsSync(target)) {
     suffix.unshift(path.basename(target));
     target = path.dirname(target);
   }
-  target = path.join(fs.realpathSync(target), ...suffix);
+  target = path.join(fs.realpathSync.native(target), ...suffix);
   if (target === gitDir || target.startsWith(`${gitDir}${path.sep}`) || gitDir.startsWith(`${target}${path.sep}`)) {
     throw new Error('Destination overlaps Git metadata');
   }
