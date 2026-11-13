@@ -38,6 +38,8 @@ The `node-test` and `finite-domain` JSON oracles list case IDs, module paths, ex
 
 The tested route reports observed cases. The bounded route requires exactly one case for every input tuple in the approved finite domain. A human reviews whether the domain and expected values capture the intended claim. The TLA+ model checks a finite promotion protocol and includes an unfenced configuration that must produce an unauthorized-update counterexample.
 
+Set `policy.reuseEvidence` to `true` only for deterministic Node and finite-domain checks. Verity can reuse raw observations for the same commit, tree, approved oracle, and execution environment. It rebuilds verdicts and artifacts for the current plan and checks current authorization before promotion. See [the reuse contract](verification/EvidenceReuse.md) for the full key and reproduction steps.
+
 ### Check a Lean proof
 
 Use `lean-comparator` on Linux with the Lean 4.35.0 toolchain and a working `bubblewrap` sandbox. The approved oracle JSON contains a qualified `theorem` name, a `solution` path relative to the subject tree, and `challenge` Lean source. Set the obligation's `cases` to an array containing the theorem name and set `expect` to `PASS`. The solution file must define a theorem with the same name and statement. The worker needs the statement to construct a proof, so include it in the task goal.

@@ -9,7 +9,7 @@ const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
 const evaluator = await readFile(new URL('./evaluate.mjs', import.meta.url));
 const environment = { runtime: process.version, platform: process.platform, arch: process.arch, adapter: hash(evaluator) };
-const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './lean-judge.mjs', './contracts.mjs'].map(async path =>
+const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './contracts.mjs'].map(async path =>
   hash(await readFile(new URL(path, import.meta.url))))));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
   adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs'].map(async path =>
@@ -23,12 +23,11 @@ function evidenceEnvironment(obligation) {
   return obligation.method === 'lean-comparator' ? proofEnvironment : environment;
 }
 
-function reuseEnvironment(obligation) {
+function reuseEnvironment() {
   return {
     runtime: process.version, platform: process.platform, arch: process.arch,
     adapter: reuseAdapter, evaluator: { lang: 'C', timezone: 'UTC' },
     systemRoot: process.platform === 'win32' ? process.env.SystemRoot ?? null : null,
-    ...(obligation.method === 'lean-comparator' ? { lean: leanEnvironment } : {}),
   };
 }
 
@@ -196,7 +195,7 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     requireThat(timeout > 0, 'Task budget expired');
     const cacheEnabled = cacheAuthority(journal, attempt, task, obligation);
     const cacheKey = cacheEnabled ? evidenceReuseKey({ obligation, claim, subject: commit, tree: repo.tree(commit), manifest,
-      oracleBytes: bytes, environment: reuseEnvironment(obligation) }) : null;
+      oracleBytes: bytes, environment: reuseEnvironment() }) : null;
     let raw = cacheEnabled ? journal.reusableEvidence(cacheKey) : null;
     let result;
     let remember = false;
