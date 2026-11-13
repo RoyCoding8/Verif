@@ -9,6 +9,8 @@ const execute = promisify(execFile);
 const maxArtifactSize = 2 * 1024 * 1024;
 const evaluator = await readFile(new URL('./evaluate.mjs', import.meta.url));
 const environment = { runtime: process.version, platform: process.platform, arch: process.arch, adapter: hash(evaluator) };
+const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './lean-judge.mjs', './contracts.mjs'].map(async path =>
+  hash(await readFile(new URL(path, import.meta.url))))));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
   adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs'].map(async path =>
     hash(await readFile(new URL(path, import.meta.url)))))) };
@@ -19,6 +21,23 @@ function environmentFor(plan) {
 
 function evidenceEnvironment(obligation) {
   return obligation.method === 'lean-comparator' ? proofEnvironment : environment;
+}
+
+function reuseEnvironment(obligation) {
+  return {
+    runtime: process.version, platform: process.platform, arch: process.arch,
+    adapter: reuseAdapter, evaluator: { lang: 'C', timezone: 'UTC' },
+    systemRoot: process.platform === 'win32' ? process.env.SystemRoot ?? null : null,
+    ...(obligation.method === 'lean-comparator' ? { lean: leanEnvironment } : {}),
+  };
+}
+
+export function evidenceReuseKey({ obligation, claim, subject, tree, manifest, oracleBytes, environment: runEnvironment }) {
+  return digest({
+    version: 2, method: obligation.method, oracle: obligation.oracle, oracleBytes: hash(oracleBytes),
+    cases: obligation.cases, timeoutMs: obligation.timeoutMs, subject, tree, manifest,
+    environment: runEnvironment, domain: obligation.method === 'finite-domain' ? claim.domain : null,
+  });
 }
 
 async function regularFile(root, name, limit = maxArtifactSize) {
@@ -56,28 +75,19 @@ function readReport(report, obligation) {
   return { status: failures.length === 0 ? 'PASS' : 'FAIL', witness: failures.length === 1 ? failures[0] : null, cases: report.cases };
 }
 
+function stableJson(value) {
+  const sort = item => Array.isArray(item) ? item.map(sort) : item && typeof item === 'object'
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, sort(item[key])])) : item;
+  return JSON.stringify(sort(value));
+}
+
 export function subjectFor(obligation, base, candidate) {
   if (obligation.subject === 'base') return base;
   if (obligation.subject === 'candidate') return candidate;
   return obligation.subject;
 }
 
-async function evaluateLean({ oracle, obligation, workspace, manifest, timeout, signal, temp }) {
-  const { theorem, solution, challenge } = parseLeanOracle(oracle);
-  requireThat(theorem === obligation.cases[0], 'Lean theorem does not match obligation ' + obligation.id);
-  requireThat(manifest.files.some(file => file.path === solution), 'Missing Lean solution: ' + solution);
-  const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await regularFile(workspace, solution));
-  const { accepted, stdout, stderr } = await judgeLean({
-    challenge, solution: source, theorem, timeoutMs: timeout, signal, scratch: resolve(temp),
-  });
-  const cases = [{ id: theorem, status: accepted ? 'PASS' : 'FAIL' }];
-  return { cases, level: 'formal', stdout, stderr, exit: accepted ? 0 : 1,
-    output: { cases, theorem, stdout, stderr } };
-}
-
-async function evaluateNode({ oracle: cases, obligation, claim, workspace, manifest, timeout, signal, temp }) {
-  const evaluatorFile = join(temp, 'evaluate.mjs');
-  const request = join(temp, 'request.json');
+function nodeInputs(cases, obligation, claim, manifest) {
   requireThat(Array.isArray(cases) && digest(cases.map(item => item.id)) === digest(obligation.cases),
     'Oracle case IDs do not match obligation ' + obligation.id);
   const inputs = cases.map(({ id, module, name, args, expected }) => {
@@ -86,6 +96,29 @@ async function evaluateNode({ oracle: cases, obligation, claim, workspace, manif
     return { id, module, name, args };
   });
   if (obligation.method === 'finite-domain') assertExhaustiveDomain(claim.domain, inputs);
+  return inputs;
+}
+
+async function prepareOracle(oracle, obligation, claim, workspace, manifest) {
+  if (obligation.method !== 'lean-comparator') return { cases: oracle, inputs: nodeInputs(oracle, obligation, claim, manifest) };
+  const parsed = parseLeanOracle(oracle);
+  requireThat(parsed.theorem === obligation.cases[0], 'Lean theorem does not match obligation ' + obligation.id);
+  requireThat(manifest.files.some(file => file.path === parsed.solution), 'Missing Lean solution: ' + parsed.solution);
+  const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await regularFile(workspace, parsed.solution));
+  return { ...parsed, source };
+}
+
+async function evaluateLean({ prepared, obligation, timeout, signal, temp }) {
+  const { theorem, challenge, source } = prepared;
+  const { accepted, stdout, stderr } = await judgeLean({
+    challenge, solution: source, theorem, timeoutMs: timeout, signal, scratch: resolve(temp),
+  });
+  return { version: 1, method: obligation.method, accepted, stdout, stderr, exit: accepted ? 0 : 1 };
+}
+
+async function evaluateNode({ inputs, obligation, workspace, timeout, signal, temp }) {
+  const evaluatorFile = join(temp, 'evaluate.mjs');
+  const request = join(temp, 'request.json');
   await writeFile(evaluatorFile, evaluator, { flag: 'wx' });
   await writeFile(request, JSON.stringify(inputs), { flag: 'wx' });
   const env = { LANG: 'C', TZ: 'UTC', HOME: temp, USERPROFILE: temp, TMP: temp, TEMP: temp, TMPDIR: temp };
@@ -97,16 +130,56 @@ async function evaluateNode({ oracle: cases, obligation, claim, workspace, manif
     cwd: workspace, env, timeout, signal, killSignal: 'SIGKILL', maxBuffer: maxArtifactSize, windowsHide: true,
   });
   const observations = JSON.parse(stdout);
-  requireThat(Array.isArray(observations) && observations.length === cases.length, 'Incomplete observations for ' + obligation.id);
-  const observedCases = observations.map(({ id, actual }, index) => {
-    requireThat(id === cases[index].id && actual !== undefined, 'Wrong observation for ' + obligation.id);
-    return { id, status: digest(actual) === digest(cases[index].expected) ? 'PASS' : 'FAIL' };
-  });
-  return { cases: observedCases, level: obligation.method === 'finite-domain' ? 'bounded' : 'tested',
-    stdout, stderr, exit: 0, output: { cases: observedCases, observations } };
+  requireThat(Array.isArray(observations) && observations.length === inputs.length, 'Incomplete observations for ' + obligation.id);
+  return { version: 1, method: obligation.method, observations, stdout, stderr, exit: 0 };
 }
 
-async function runObligation({ repo, obligation, claim, commit, oracleRoot, scratch, signal, deadline }) {
+function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prepared }) {
+  let level;
+  let output;
+  let statuses;
+  if (obligation.method === 'lean-comparator') {
+    requireThat(raw?.version === 1 && raw.method === obligation.method && typeof raw.accepted === 'boolean' &&
+      typeof raw.stdout === 'string' && typeof raw.stderr === 'string' && raw.exit === (raw.accepted ? 0 : 1),
+    'Invalid cached Lean observation for ' + obligation.id);
+    level = 'formal';
+    statuses = [{ id: prepared.theorem, status: raw.accepted ? 'PASS' : 'FAIL' }];
+    output = { cases: statuses, theorem: prepared.theorem, stdout: raw.stdout, stderr: raw.stderr };
+  } else {
+    requireThat(raw?.version === 1 && raw.method === obligation.method && raw.exit === 0 &&
+      typeof raw.stdout === 'string' && typeof raw.stderr === 'string' && Array.isArray(raw.observations) &&
+      raw.observations.length === cases.length, 'Invalid cached Node observations for ' + obligation.id);
+    const observed = raw.observations.map((item, index) => {
+      requireThat(item && item.id === cases[index].id && Object.hasOwn(item, 'actual') && item.actual !== undefined,
+        'Wrong cached observation for ' + obligation.id);
+      return { id: item.id, status: digest(item.actual) === digest(cases[index].expected) ? 'PASS' : 'FAIL' };
+    });
+    level = obligation.method === 'finite-domain' ? 'bounded' : 'tested';
+    statuses = observed;
+    output = { cases: observed, observations: raw.observations };
+  }
+  const report = readReport({ cases: statuses }, obligation);
+  const artifacts = Object.fromEntries(obligation.outputs.map(path => {
+    const contents = Buffer.from(stableJson(output));
+    return [path, { digest: hash(contents), base64: contents.toString('base64') }];
+  }));
+  return {
+    id: obligation.id, ...report, commit, manifest, level,
+    keys: evidenceKeys(obligation, claim, commit, manifest, evidenceEnvironment(obligation)),
+    observation: { stdout: hash(raw.stdout), stderr: hash(raw.stderr), exit: raw.exit },
+    outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])),
+    artifacts,
+  };
+}
+
+function cacheAuthority(journal, attempt, task, obligation) {
+  if (!journal || !attempt || task.contract.policy.reuseEvidence !== true || obligation.method === 'lean-comparator') return false;
+  const authority = journal.authority(attempt);
+  return authority?.active === true && authority.contract === task.approval &&
+    authority.policy === digest(task.contract.policy);
+}
+
+async function runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt }) {
   const temp = await mkdtemp(join(scratch, 'check-'));
   try {
     const workspace = join(temp, 'subject');
@@ -114,38 +187,46 @@ async function runObligation({ repo, obligation, claim, commit, oracleRoot, scra
     requireThat(hash(bytes) === obligation.oracle.digest, 'Oracle digest changed for ' + obligation.id);
     const manifest = repo.materialize(commit, workspace);
     await assertMaterialization(workspace, manifest);
+    const oracle = JSON.parse(bytes.toString('utf8'));
+    const prepared = await prepareOracle(oracle, obligation, claim, workspace, manifest);
     const timeout = Math.min(obligation.timeoutMs, deadline - Date.now());
     requireThat(timeout > 0, 'Task budget expired');
-    const evaluate = obligation.method === 'lean-comparator' ? evaluateLean : evaluateNode;
-    const { cases, level, stdout, stderr, exit, output } = await evaluate({
-      oracle: JSON.parse(bytes.toString('utf8')), obligation, claim, workspace, manifest, timeout, signal, temp,
-    });
-    const report = readReport({ cases }, obligation);
-    await assertMaterialization(workspace, manifest);
-    const artifacts = Object.fromEntries(obligation.outputs.map(path => {
-      const contents = Buffer.from(JSON.stringify(output));
-      return [path, { digest: hash(contents), base64: contents.toString('base64') }];
-    }));
-    return {
-      id: obligation.id, ...report, commit, manifest,
-      level,
-      keys: evidenceKeys(obligation, claim, commit, manifest, evidenceEnvironment(obligation)),
-      observation: { stdout: hash(stdout), stderr: hash(stderr), exit },
-      outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])),
-      artifacts,
-    };
+    const cacheEnabled = cacheAuthority(journal, attempt, task, obligation);
+    const cacheKey = cacheEnabled ? evidenceReuseKey({ obligation, claim, subject: commit, tree: repo.tree(commit), manifest,
+      oracleBytes: bytes, environment: reuseEnvironment(obligation) }) : null;
+    let raw = cacheEnabled ? journal.reusableEvidence(cacheKey) : null;
+    let result;
+    let remember = false;
+    if (raw) {
+      try {
+        result = presentEvidence(raw, { obligation, claim, commit, manifest, cases: prepared.cases, prepared });
+      } catch {
+        raw = null;
+      }
+    }
+    if (!raw) {
+      const evaluate = obligation.method === 'lean-comparator' ? evaluateLean : evaluateNode;
+      raw = await evaluate({ prepared, inputs: prepared.inputs, obligation, workspace, timeout, signal, temp });
+      await assertMaterialization(workspace, manifest);
+      result = presentEvidence(raw, { obligation, claim, commit, manifest, cases: prepared.cases, prepared });
+      remember = true;
+    }
+    signal?.throwIfAborted();
+    requireThat(Date.now() < deadline, 'Task budget expired');
+    if (remember && cacheEnabled && cacheAuthority(journal, attempt, task, obligation)) journal.rememberEvidence(cacheKey, raw);
+    return result;
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
 }
 
-export async function verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline }) {
+export async function verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt }) {
   const results = [];
   for (const obligation of task.plan.obligations) {
     signal?.throwIfAborted();
     const claim = task.plan.claims.find(claim => claim.id === obligation.claim);
     const commit = subjectFor(obligation, base, candidate);
-    results.push(await runObligation({ repo, obligation, claim, commit, oracleRoot, scratch, signal, deadline }));
+    results.push(await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt }));
   }
   const assurance = compose(task.plan, results);
   return { version: 1, contract: task.approval, plan: task.contract.plan, base, candidate, environment: environmentFor(task.plan), results, assurance };
@@ -156,7 +237,7 @@ export async function checkFeedback({ repo, task, name, base, candidate, oracleR
   requireThat(obligation, 'Unknown approved check ' + name);
   const claim = task.plan.claims.find(item => item.id === obligation.claim);
   const commit = subjectFor(obligation, base, candidate);
-  const { status, witness } = await runObligation({ repo, obligation, claim, commit, oracleRoot, scratch, signal, deadline });
+  const { status, witness } = await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline });
   return witness ? status + ' (' + witness + ')' : status;
 }
 

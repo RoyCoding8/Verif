@@ -133,7 +133,7 @@ async function integrate(context, task, claim, attempt, base, original, deadline
     });
     const paths = repo.changedPaths(head, candidate);
     requireThat(digest(paths) === digest(originalPaths), 'Integration changed the approved path set');
-    const evidence = await verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline });
+    const evidence = await verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt });
     if (repo.readRef(ref) !== head) continue;
     signal.throwIfAborted();
     const bundle = { repository, runId, claim, task, evidence, base, original, candidate, deadline, prerequisites };
