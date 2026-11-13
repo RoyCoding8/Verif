@@ -156,6 +156,11 @@ test('seeded property checks execute generated cases and retain the sampling rec
     await writeFile(join(workspace, 'reserve.mjs'), 'export const reserve = () => -1;\n');
   } });
   assert.match(refused.reason, /Unexpected verdict/);
+  const [failure] = inspectRun({ ...settings, tasks: [task] }).verifierRefusals;
+  assert.equal(failure.obligation, obligation.id);
+  assert.equal(failure.observed, 'FAIL');
+  assert.equal(failure.expected, 'PASS');
+  assert.match(failure.evidence, /^[0-9a-f]{64}$/);
   const [result] = await runTasks({ ...settings, oracleRoot, tasks: [approve({ ...task, revision: 2 })], worker: fixtureWorker });
   assert.equal(result.status, 'promoted', JSON.stringify(result));
   assert.deepEqual(result.assurance, { stock: 'tested' });

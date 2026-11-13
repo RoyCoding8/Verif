@@ -36,6 +36,8 @@ Use `node src/cli.mjs refinement manifest.json witness-request.json` on Linux to
 
 Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it. The initial attempt plus `policy.maxRepairs` is the total attempt allowance. Requeue keeps the original deadline and charges any attempt already reserved.
 
+`status` includes verifier verdict mismatches with the attempt, obligation, candidate snapshot and evidence identity. Held-out failures stay in the controller journal. Retry prompts receive the generic refusal and any explicitly approved feedback.
+
 To choose the Pi model, set `policy.modelRoute` to an ordered list of exact `{provider, model}` pairs. Each reserved attempt advances through that list and reuses its final entry when the list is exhausted. The provider needs credentials on the controller host. Route changes require a new principal approval.
 
 Set `policy.maxToolCalls` to cap Pi tool calls and `policy.maxVerificationMs` to cap the sum of timeouts reserved for new verifier executions. Both allowances are shared by a task's attempts and survive restart. Feedback checks and final verification draw from the same verifier allowance. A cache hit uses no new verifier reservation.

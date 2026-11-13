@@ -257,14 +257,19 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
 }
 
 export async function verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt,
-  reserveVerification, proofDependencies }) {
+  reserveVerification, proofDependencies, onVerdict }) {
   const results = [];
   for (const obligation of task.plan.obligations) {
     signal?.throwIfAborted();
     const claim = task.plan.claims.find(claim => claim.id === obligation.claim);
     const commit = subjectFor(obligation, base, candidate);
-    results.push(await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt,
-      reserveVerification, dependencies: proofDependencies?.get(obligation.id) }));
+    const result = await runObligation({ repo, task, obligation, claim, commit, oracleRoot, scratch, signal, deadline, journal, attempt,
+      reserveVerification, dependencies: proofDependencies?.get(obligation.id) });
+    results.push(result);
+    if (result.status !== obligation.expect || (obligation.expect === 'FAIL' && result.witness !== obligation.witness)) {
+      onVerdict?.({ obligation: obligation.id, claim: claim.id, subject: commit, expected: obligation.expect,
+        observed: result.status, expectedWitness: obligation.witness, observedWitness: result.witness, evidence: result.keys.authorization });
+    }
   }
   const assurance = compose(task.plan, results);
   return { version: 1, contract: task.approval, plan: task.contract.plan, base, candidate, environment: environmentFor(task.plan), results, assurance };

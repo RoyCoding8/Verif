@@ -128,7 +128,7 @@ export function inspectRun({ repository, journalPath, tasks: inputs, requeue }) 
       requireThat(!pending, 'Recover prepared operation ' + pending?.id + ' before requeueing');
       journal.requeueTask(runId, requeue);
     }
-    return { runId, tasks: journal.runTasks(runId) };
+    return { runId, tasks: journal.runTasks(runId), verifierRefusals: journal.verifierRefusals(runId) };
   } finally {
     journal.close();
   }
@@ -155,7 +155,8 @@ async function integrate(context, task, claim, attempt, base, original, deadline
     requireThat(digest(paths) === digest(originalPaths), 'Integration changed the approved path set');
     const proofDependencies = resolveProofDependencies(task, runId, prerequisites, journal);
     const evidence = await verify({ repo, task, base, candidate, oracleRoot, scratch, signal, deadline, journal, attempt,
-      reserveVerification: resourceReservation(journal, attempt, 'verification time', contract.policy.maxVerificationMs), proofDependencies });
+      reserveVerification: resourceReservation(journal, attempt, 'verification time', contract.policy.maxVerificationMs), proofDependencies,
+      onVerdict: result => journal.recordVerifierRefusal(attempt, result) });
     if (repo.readRef(ref) !== head) continue;
     signal.throwIfAborted();
     const bundle = { repository, runId, claim, task, evidence, base, original, candidate, deadline, prerequisites };
@@ -222,15 +223,18 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
         runCheck: feedbackChecks.length === 0 ? undefined : async (name, options) => {
           requireThat(!checking, 'A feedback check is already running');
           requireThat(feedbackChecks.includes(name), 'Unknown approved check ' + name);
+          requireThat(journal.authority(attempt)?.active, 'Attempt cannot run feedback checks');
           checking = true;
           try {
             const snapshot = repo.capture(workspace, base);
             const checkSignal = options?.signal ? AbortSignal.any([signal, options.signal]) : signal;
-            return await checkFeedback({
+            const result = await checkFeedback({
               repo, task, name, base, candidate: snapshot, oracleRoot, scratch, signal: checkSignal, deadline,
               reserveVerification: resourceReservation(journal, attempt, 'verification time', contract.policy.maxVerificationMs),
               proofDependencies: resolveProofDependencies(task, runId, prerequisites, journal),
             });
+            requireThat(journal.authority(attempt)?.active, 'Attempt cannot receive feedback checks');
+            return result;
           } catch (error) {
             return 'Feedback failed: ' + error.message;
           } finally {

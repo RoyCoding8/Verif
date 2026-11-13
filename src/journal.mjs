@@ -127,6 +127,12 @@ export class Journal {
         PRIMARY KEY (run_id, task_id, kind),
         FOREIGN KEY (run_id, task_id) REFERENCES run_tasks(run_id, task_id)
       );
+      CREATE TABLE IF NOT EXISTS verifier_refusals (
+        attempt TEXT NOT NULL REFERENCES attempts(id),
+        evidence TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        PRIMARY KEY (attempt, evidence)
+      );
       CREATE TABLE IF NOT EXISTS run_tasks (
         run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
         task_id TEXT NOT NULL,
@@ -288,6 +294,18 @@ export class Journal {
         ON CONFLICT (run_id, task_id, kind) DO UPDATE SET spent = excluded.spent
       `).run(attempt.run_id, attempt.task_id, kind, spent + amount);
     });
+  }
+
+  recordVerifierRefusal(attempt, result) {
+    this.#db.prepare('INSERT OR IGNORE INTO verifier_refusals (attempt, evidence, payload) VALUES (?, ?, ?)')
+      .run(requireString(attempt, 'attempt'), requireString(result.evidence, 'evidence'), canonicalJson(result));
+  }
+
+  verifierRefusals(runId) {
+    return this.#db.prepare(`
+      SELECT records.attempt, attempts.task_id, records.payload FROM verifier_refusals records
+      JOIN attempts ON attempts.id = records.attempt WHERE attempts.run_id = ? ORDER BY records.rowid
+    `).all(requireString(runId, 'runId')).map(row => ({ task: row.task_id, attempt: row.attempt, ...JSON.parse(row.payload) }));
   }
 
   invalidate(id) {
