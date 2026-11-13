@@ -204,6 +204,11 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
   const repairs = contract.policy.maxRepairs ?? 0;
   const feedbackChecks = contract.policy.feedbackChecks ?? [];
   const policy = digest(contract.policy);
+  const lessons = contract.policy.lessons ?? [];
+  for (const { attempt, evidence } of lessons) {
+    requireThat(journal.hasVerifierRefusal(attempt, evidence), 'Approved lesson lacks a recorded verifier refusal');
+  }
+  const guidance = lessons.map(({ diagnosis }) => '\nApproved lesson: ' + diagnosis).join('');
   let diagnosis = '';
   for (let round = 0; round <= repairs; round++) {
     signal.throwIfAborted();
@@ -224,7 +229,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
       if (contract.revertOperation) repo.revertIn(workspace, rollbackTarget(repo, journal, context.repository, contract, base));
       else {
         const report = await worker({
-          workspace, goal: contract.goal + diagnosis, scope: contract.scope, signal,
+          workspace, goal: contract.goal + guidance + diagnosis, scope: contract.scope, signal,
           ...(route ? { route } : {}),
           reserveToolCall: () => {
             requireAttemptAuthority(journal, attempt, task.approval, policy, 'tool calls');

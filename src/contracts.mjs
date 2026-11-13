@@ -230,6 +230,18 @@ export function makeContract(input, plan) {
     requireThat(Array.isArray(feedbackChecks) && new Set(feedbackChecks).size === feedbackChecks.length &&
       feedbackChecks.every(id => obligationIds.has(id)), 'Feedback checks must be unique approved obligation IDs');
   }
+  if (Object.hasOwn(policy, 'lessons')) {
+    requireThat(Array.isArray(policy.lessons) && policy.lessons.length <= 16, 'Invalid approved lessons');
+    const ids = new Set();
+    for (const lesson of policy.lessons) {
+      requireThat(lesson && typeof lesson.attempt === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(lesson.attempt) &&
+        typeof lesson.evidence === 'string' && /^[0-9a-f]{64}$/.test(lesson.evidence) &&
+        text(lesson.diagnosis) && lesson.diagnosis.length <= 2000 && text(lesson.regression) &&
+        plan.obligations.some(item => item.id === lesson.regression && item.subject === 'candidate' && item.expect === 'PASS') &&
+        !ids.has(lesson.regression), 'Invalid or duplicate approved lesson regression');
+      ids.add(lesson.regression);
+    }
+  }
   requireThat(Array.isArray(dependencies) && dependencies.every(text) && !dependencies.includes(id) &&
     new Set(dependencies).size === dependencies.length, 'Invalid task dependencies');
   requireThat(plan.obligations.every(obligation => (obligation.proofDependencies ?? []).every(link => dependencies.includes(link.task))),

@@ -313,6 +313,10 @@ export class Journal {
     `).all(requireString(runId, 'runId')).map(row => ({ task: row.task_id, attempt: row.attempt, ...JSON.parse(row.payload) }));
   }
 
+  hasVerifierRefusal(attempt, evidence) {
+    return Boolean(this.#db.prepare('SELECT 1 FROM verifier_refusals WHERE attempt = ? AND evidence = ?').get(attempt, evidence));
+  }
+
   recordModelUsage(attempt, usage) {
     const tokens = usage?.tokens?.total;
     const cost = usage?.estimatedCost;

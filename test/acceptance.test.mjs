@@ -163,7 +163,16 @@ test('seeded property checks execute generated cases and retain the sampling rec
   assert.equal(failure.observed, 'FAIL');
   assert.equal(failure.expected, 'PASS');
   assert.match(failure.evidence, /^[0-9a-f]{64}$/);
-  const [result] = await runTasks({ ...settings, oracleRoot, tasks: [approve({ ...task, revision: 2 })], worker: fixtureWorker });
+  const lesson = { attempt: failure.attempt, evidence: failure.evidence, diagnosis: 'Zero stock must remain zero.', regression: obligation.id };
+  const learned = { ...task, revision: 2, policy: { ...task.policy, lessons: [lesson] } };
+  const fabricated = approve({ ...learned, policy: { ...learned.policy, lessons: [{ ...lesson, evidence: '0'.repeat(64) }] } });
+  const [blocked] = await runTasks({ ...settings, oracleRoot, tasks: [fabricated], worker: async () => assert.fail('Missing lesson dispatched a worker') });
+  assert.match(blocked.reason, /lacks a recorded verifier refusal/);
+  const [result] = await runTasks({ ...settings, oracleRoot, tasks: [approve(learned)], worker: async job => {
+    assert.match(job.goal, /Approved lesson: Zero stock must remain zero/);
+    assert.doesNotMatch(job.goal, new RegExp(failure.evidence));
+    await fixtureWorker(job);
+  } });
   assert.equal(result.status, 'promoted', JSON.stringify(result));
   assert.deepEqual(result.assurance, { stock: 'tested' });
   const journal = new Journal(settings.journalPath);
