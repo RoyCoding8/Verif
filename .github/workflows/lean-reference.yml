@@ -3,14 +3,12 @@ name: Lean reference
 on:
   push:
     paths:
-      - "src/contracts.mjs"
-      - "src/verify.mjs"
+      - "src/**"
       - "verification/lean/**"
       - ".github/workflows/lean-reference.yml"
   pull_request:
     paths:
-      - "src/contracts.mjs"
-      - "src/verify.mjs"
+      - "src/**"
       - "verification/lean/**"
       - ".github/workflows/lean-reference.yml"
   workflow_dispatch:
