@@ -11,7 +11,7 @@ async function fixture(t) {
   return dir;
 }
 
-function fakeSdk({ activeTools, promptError } = {}) {
+function fakeSdk({ activeTools, promptError, messages, stats } = {}) {
   const state = { options: undefined, disposed: false, prompt: undefined };
   const sdk = {
     createExtensionRuntime: () => ({}),
@@ -25,6 +25,8 @@ function fakeSdk({ activeTools, promptError } = {}) {
       state.options = options;
       return {
         session: {
+          messages,
+          getSessionStats: () => stats,
           async prompt(prompt) { state.prompt = prompt; if (promptError) throw promptError; },
           getLastAssistantText: () => "candidate summary",
           getActiveToolNames: () => activeTools ?? options.tools,
@@ -56,6 +58,22 @@ test("creates an isolated, explicit SDK session and exposes a candidate summary"
   assert.deepEqual(state.options.resourceLoader.getPrompts(), { prompts: [], diagnostics: [] });
   assert.deepEqual(state.options.resourceLoader.getAgentsFiles(), { agentsFiles: [] });
   assert.equal(state.disposed, true);
+});
+
+test("an explicitly selected Pi model reports usage and refuses failed provider responses", async t => {
+  const workspace = await fixture(t);
+  const modelRuntime = {};
+  const model = {};
+  const tokens = { input: 23, output: 7, cacheRead: 0, cacheWrite: 0, total: 30 };
+  const { sdk, state } = fakeSdk({ stats: { tokens, cost: 0.01 }, messages: [{ role: "assistant", stopReason: "stop" }] });
+  const request = { workspace, goal: "Inspect the source", scope: { read: [], write: [], forbidden: [] }, model, modelRuntime };
+  const result = await runPiWorker({ ...request, sdk });
+  assert.deepEqual(result.usage, { tokens, estimatedCost: 0.01 });
+  assert.equal(state.options.model, model);
+  assert.equal(state.options.modelRuntime, modelRuntime);
+  const failed = fakeSdk({ messages: [{ role: "assistant", stopReason: "error", errorMessage: "provider detail" }] });
+  await assert.rejects(runPiWorker({ ...request, sdk: failed.sdk }), /Pi did not complete the model request/);
+  assert.equal(failed.state.disposed, true);
 });
 
 test("scoped tools read, edit, write, search, and limit named feedback checks", async (t) => {
