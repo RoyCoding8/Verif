@@ -80,7 +80,7 @@ WriteRef ==
   /\ head' = opTarget
   /\ phase' = "ref-written"
   /\ writeFrom' = head
-  /\ writeAuthorized' = opOwner \in activeAuth
+  /\ writeAuthorized' = (opOwner \in activeAuth)
   /\ writtenOwner' = opOwner
   /\ writtenTarget' = opTarget
   /\ UNCHANGED <<activeAuth, checkedHead, opOwner, frozenHead, opTarget>>
@@ -114,7 +114,7 @@ UnsafeWriteRef ==
   /\ head' = opTarget
   /\ phase' = "ref-written"
   /\ writeFrom' = head
-  /\ writeAuthorized' = opOwner \in activeAuth
+  /\ writeAuthorized' = (opOwner \in activeAuth)
   /\ writtenOwner' = opOwner
   /\ writtenTarget' = opTarget
   /\ UNCHANGED <<activeAuth, checkedHead, opOwner, frozenHead, opTarget>>
@@ -146,6 +146,8 @@ Safety ==
      /\ writeAuthorized
      /\ writtenOwner = opOwner
      /\ writtenTarget = opTarget
+
+PositiveWrite == phase \in {"ref-written", "recorded"}
 
 IndInv == TypeOK /\ PreparedShape /\ Safety
 
