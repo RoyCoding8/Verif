@@ -13,7 +13,7 @@ on:
         type: string
         required: true
       trials:
-        description: Paired trials, from 1 to 10
+        description: Paired trials per challenge, from 1 to 10
         type: number
         default: 2
         required: true
@@ -24,7 +24,7 @@ permissions:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 95
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

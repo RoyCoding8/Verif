@@ -13,6 +13,8 @@ npm run demo
 
 The example starts two independent reservation tasks and schedules the API task after both land. It checks all 15 cases in a declared arithmetic domain, observes the expected failure on the original code, and checks one API interaction. The fixture supplies reproducible candidate edits. To let Pi propose the edits, configure a Pi model and run `npm run demo -- --pi`.
 
+The `Evaluate Pi reservation changes` workflow runs paired normal and adversarial prompts under the same selected Pi model and wall-time budget. Its shadow suite measures whether candidates preserve other reservation statuses. The live workflow requires the selected provider's GitHub Actions secret.
+
 ## Run an approved plan
 
 The manifest contains `repository`, `oracles`, `journal`, `scratch`, `maxWorkers`, and `tasks`. Paths are relative to the manifest. The example builds the task records in `examples/setup.mjs`. Store the manifest, oracle files, journal, and protected repository under controller control.
