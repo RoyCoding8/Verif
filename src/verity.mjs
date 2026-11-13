@@ -169,6 +169,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
   const timer = AbortSignal.timeout(remaining);
   const signal = cancellation ? AbortSignal.any([timer, cancellation]) : timer;
   const repairs = contract.policy.maxRepairs ?? 0;
+  const feedbackChecks = contract.policy.feedbackChecks ?? [];
   let diagnosis = '';
   for (let round = 0; round <= repairs; round++) {
     signal.throwIfAborted();
@@ -187,10 +188,10 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
       repo.fork(base, workspace);
       await worker({
         workspace, goal: contract.goal + diagnosis, scope: contract.scope, signal,
-        approvedChecks: task.plan.obligations.map(obligation => obligation.id),
-        runCheck: async (name, options) => {
+        approvedChecks: [...feedbackChecks],
+        runCheck: feedbackChecks.length === 0 ? undefined : async (name, options) => {
           requireThat(!checking, 'A feedback check is already running');
-          requireThat(task.plan.obligations.some(o => o.id === name), 'Unknown approved check ' + name);
+          requireThat(feedbackChecks.includes(name), 'Unknown approved check ' + name);
           checking = true;
           try {
             const snapshot = repo.capture(workspace, base);
@@ -210,7 +211,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
       return await integrate(context, task, claim, attempt, base, candidate, deadline, signal, prerequisites);
     } catch (error) {
       if (round === repairs || signal.aborted || error instanceof RecoveryRequired || !journal.authority(attempt)?.active) throw error;
-      diagnosis = '\nPrevious attempt was refused: ' + error.message;
+      diagnosis = '\nPrevious attempt was refused. Use the task goal and any approved feedback checks to revise your approach.';
     } finally {
       journal.invalidate(attempt);
       if (temporary) await rm(temporary, { recursive: true, force: true });

@@ -187,6 +187,12 @@ export function makeContract(input, plan) {
   requireThat(policy && typeof policy === 'object' && !Array.isArray(policy), 'Invalid contract policy');
   requireThat(!Object.hasOwn(policy, 'delegation') || policy.delegation === 'monotonic', 'Unsupported delegation policy');
   requireThat(!Object.hasOwn(policy, 'reuseEvidence') || typeof policy.reuseEvidence === 'boolean', 'Invalid evidence reuse policy');
+  if (Object.hasOwn(policy, 'feedbackChecks')) {
+    const { feedbackChecks } = policy;
+    const obligationIds = new Set(plan.obligations.map(({ id }) => id));
+    requireThat(Array.isArray(feedbackChecks) && new Set(feedbackChecks).size === feedbackChecks.length &&
+      feedbackChecks.every(id => obligationIds.has(id)), 'Feedback checks must be unique approved obligation IDs');
+  }
   requireThat(Array.isArray(dependencies) && dependencies.every(text) && !dependencies.includes(id) &&
     new Set(dependencies).size === dependencies.length, 'Invalid task dependencies');
   requireThat(base === 'head-at-dispatch' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(base), 'Invalid task base');

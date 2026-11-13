@@ -73,7 +73,10 @@ test('a rejected proof triggers repair and only the accepted proof advances the 
   const [result] = await runTasks({ ...settings, worker: async ({ workspace, goal }) => {
     assert.equal(repo.readRef(policy.ref), head);
     attempts++;
-    if (attempts === 2) assert.match(goal, /Unexpected verdict for proof/);
+    if (attempts === 2) {
+      assert.match(goal, /Previous attempt was refused/);
+      assert.doesNotMatch(goal, /Unexpected verdict/);
+    }
     const source = attempts === 1 ? 'theorem Warranty.addZero : True := by trivial\n' : statement + ' := by rfl\n';
     await writeFile(join(workspace, solution), source);
   } });

@@ -26,6 +26,8 @@ To ask Pi for a plan, list the available oracle files in each task's `oracleFile
 
 For a task whose approved policy includes `"delegation": "monotonic"`, run `node src/cli.mjs delegate manifest.json proposed-task.json` to check the next full task revision. It returns the revised task and the digests that bind it to its predecessor. Existing claims and obligations stay fixed, coverage can grow, and budgets and path permissions can tighten. The controller can install the returned task in its manifest after the check. Keep that manifest under controller ownership.
 
+Set `policy.feedbackChecks` to the obligation IDs the worker may run while constructing a candidate. The default is an empty list. Keep held-out acceptance obligations outside this list. Workers receive a generic refusal on retry and operators can inspect the specific final refusal with `status`.
+
 Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it.
 
 ## Evidence and operating scope

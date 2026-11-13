@@ -28,6 +28,8 @@ test('parallel candidates integrate against current head and unlock the dependen
   const results = await runTasks({
     ...settings,
     worker: async job => {
+      assert.deepEqual(job.approvedChecks, []);
+      assert.equal(job.runCheck, undefined);
       inProgress++;
       peak = Math.max(peak, inProgress);
       await setTimeout(30);
@@ -104,6 +106,30 @@ test('verification rejects a non-discriminating baseline and an infeasible assur
   assert.match(result.reason, /Wrong failure witness/);
   task.claims[0].required = 'formal';
   assert.throws(() => planVerification(task), /Insufficient assurance/);
+});
+
+test('worker feedback requires an explicit grant and private acceptance failures stay out of repairs', async t => {
+  const settings = await fixture(t);
+  const input = settings.tasks[0];
+  assert.throws(() => approve({ ...input, policy: { ...input.policy, feedbackChecks: ['absent'] } }), /Feedback checks/);
+  assert.throws(() => approve({ ...input, policy: { ...input.policy, feedbackChecks: ['stock-before', 'stock-before'] } }), /Feedback checks/);
+  const task = approve({ ...input, policy: { ...input.policy, maxRepairs: 1, feedbackChecks: ['stock-before'] } });
+  let attempts = 0;
+  const [result] = await runTasks({ ...settings, tasks: [task], worker: async job => {
+    attempts++;
+    assert.deepEqual(job.approvedChecks, ['stock-before']);
+    await assert.rejects(job.runCheck('stock-after'), /Unknown approved check/);
+    if (attempts === 1) {
+      assert.equal(await job.runCheck('stock-before'), 'FAIL (0/1)');
+      await writeFile(join(job.workspace, 'reserve.mjs'), 'export function reserve() { return -2; }\n');
+    } else {
+      assert.match(job.goal, /Previous attempt was refused/);
+      assert.doesNotMatch(job.goal, /stock-after|Unexpected verdict/);
+      await fixtureWorker(job);
+    }
+  } });
+  assert.equal(attempts, 2);
+  assert.equal(result.status, 'promoted', JSON.stringify(result));
 });
 
 test('rejects a finite oracle that repeats a tuple under different case IDs', () => {
