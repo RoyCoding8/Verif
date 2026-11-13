@@ -83,7 +83,29 @@ def gate : Option GateInput → Bool
     input.scope && input.composition && input.freshness && input.verdict && input.artifacts
 
 theorem gateExact (input : GateInput) : gate (some input) = true ↔ gateAuthorized input := by
-  simp [gate, gateAuthorized, Bool.and_assoc]
+  constructor
+  · intro accepted
+    change (input.authority && input.budget && input.contract && input.receipt && input.scope &&
+      input.composition && input.freshness && input.verdict && input.artifacts) = true at accepted
+    obtain ⟨accepted, artifacts⟩ := Bool.and_eq_true_iff.mp accepted
+    obtain ⟨accepted, verdict⟩ := Bool.and_eq_true_iff.mp accepted
+    obtain ⟨accepted, freshness⟩ := Bool.and_eq_true_iff.mp accepted
+    obtain ⟨accepted, composition⟩ := Bool.and_eq_true_iff.mp accepted
+    obtain ⟨accepted, scope⟩ := Bool.and_eq_true_iff.mp accepted
+    obtain ⟨accepted, receipt⟩ := Bool.and_eq_true_iff.mp accepted
+    obtain ⟨accepted, contract⟩ := Bool.and_eq_true_iff.mp accepted
+    obtain ⟨authority, budget⟩ := Bool.and_eq_true_iff.mp accepted
+    exact ⟨authority, budget, contract, receipt, scope, composition, freshness, verdict, artifacts⟩
+  · intro authorized
+    rcases authorized with ⟨authority, budget, contract, receipt, scope, composition, freshness, verdict, artifacts⟩
+    have accepted := Bool.and_eq_true_iff.mpr ⟨authority, budget⟩
+    have accepted := Bool.and_eq_true_iff.mpr ⟨accepted, contract⟩
+    have accepted := Bool.and_eq_true_iff.mpr ⟨accepted, receipt⟩
+    have accepted := Bool.and_eq_true_iff.mpr ⟨accepted, scope⟩
+    have accepted := Bool.and_eq_true_iff.mpr ⟨accepted, composition⟩
+    have accepted := Bool.and_eq_true_iff.mpr ⟨accepted, freshness⟩
+    have accepted := Bool.and_eq_true_iff.mpr ⟨accepted, verdict⟩
+    exact Bool.and_eq_true_iff.mpr ⟨accepted, artifacts⟩
 
 theorem gateRefusesMissing : gate none = false := rfl
 
