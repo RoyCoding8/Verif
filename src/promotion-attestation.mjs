@@ -7,11 +7,10 @@ const PAYLOAD_TYPE = 'application/vnd.in-toto+json';
 const STATEMENT_TYPE = 'https://in-toto.io/Statement/v1';
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const SHA256 = /^[0-9a-f]{64}$/;
-const OPERATION = /^[^\r\n\0]+$/;
+const maxPayload = 1_125_000;
 
 function pae(payloadType, payload) {
-  const type = Buffer.from(payloadType, 'ascii');
-  requireThat(type.toString('ascii') === payloadType, 'DSSE payload type must be ASCII');
+  const type = Buffer.from(payloadType, 'utf8');
   return Buffer.concat([Buffer.from(`DSSEv1 ${type.length} `, 'ascii'), type,
     Buffer.from(` ${payload.length} `, 'ascii'), payload]);
 }
@@ -29,7 +28,6 @@ function operationReceipt(operation) {
   const contract = task?.contract;
   const plan = task?.plan;
   const evidence = receipt?.evidence;
-  requireThat(typeof operation.id === 'string' && OPERATION.test(operation.id), 'Invalid operation ID');
   requireThat(typeof operation.ref === 'string' && operation.ref.startsWith('refs/heads/'), 'Invalid target ref');
   requireThat(typeof operation.old === 'string' && OID.test(operation.old) &&
     typeof operation.next === 'string' && OID.test(operation.next), 'Invalid promotion commit identity');
@@ -67,9 +65,9 @@ function approvedExceptionIds(plan) {
 export function createPromotionAttestation({ repo, operation, privateKey }) {
   requireThat(privateKey?.type === 'private' && privateKey.asymmetricKeyType === 'ed25519',
     'Promotion attestation requires an Ed25519 private key');
-  const { receipt, contract, evidence } = operationReceipt(operation);
+  const { receipt, contract, plan, evidence } = operationReceipt(operation);
   const { commit, tree, receiptDigest } = promotionDetails(repo, operation, receipt);
-  const exceptionIds = approvedExceptionIds(operation.receipt.task.plan);
+  const exceptionIds = approvedExceptionIds(plan);
   const predicate = {
     version: 1,
     operation: operation.id,
@@ -88,6 +86,7 @@ export function createPromotionAttestation({ repo, operation, privateKey }) {
     predicate,
   };
   const payload = Buffer.from(JSON.stringify(statement), 'utf8');
+  requireThat(payload.length <= maxPayload, 'Promotion statement is too large');
   return {
     payloadType: PAYLOAD_TYPE,
     payload: payload.toString('base64'),
@@ -97,26 +96,25 @@ export function createPromotionAttestation({ repo, operation, privateKey }) {
 
 function decodeEnvelope(envelope) {
   requireThat(envelope && envelope.payloadType === PAYLOAD_TYPE && typeof envelope.payload === 'string' &&
-    envelope.payload.length <= 1_500_000 &&
+    envelope.payload.length <= maxPayload / 3 * 4 &&
     Array.isArray(envelope.signatures) && envelope.signatures.length === 1,
   'Invalid promotion DSSE envelope');
   const signature = envelope.signatures[0];
   requireThat(typeof signature?.keyid === 'string' && SHA256.test(signature.keyid) &&
-    typeof signature.sig === 'string' && signature.sig.length <= 256,
+    typeof signature.sig === 'string' && signature.sig.length === 88,
   'Invalid promotion DSSE signature');
-  return { payload: Buffer.from(envelope.payload, 'base64'), signature };
+  return { payload: Buffer.from(envelope.payload, 'base64'), signature, signatureBytes: Buffer.from(signature.sig, 'base64') };
 }
 
 function authenticatedStatement({ envelope, publicKey }) {
   requireThat(publicKey?.type === 'public' && publicKey.asymmetricKeyType === 'ed25519',
     'Promotion attestation requires an Ed25519 public key');
-  const { payload, signature } = decodeEnvelope(envelope);
-  requireThat(envelope.payload === payload.toString('base64') && signature.sig === Buffer.from(signature.sig, 'base64').toString('base64'),
+  const { payload, signature, signatureBytes } = decodeEnvelope(envelope);
+  requireThat(envelope.payload === payload.toString('base64') && signature.sig === signatureBytes.toString('base64'),
     'Non-canonical DSSE base64 encoding');
   requireThat(signature.keyid === keyId(publicKey), 'DSSE key ID does not match the supplied public key');
-  const signatureBytes = Buffer.from(signature.sig, 'base64');
-  requireThat(signature.sig === signatureBytes.toString('base64') &&
-    verify(null, pae(envelope.payloadType, payload), publicKey, signatureBytes), 'Invalid promotion DSSE signature');
+  requireThat(signatureBytes.length === 64 && verify(null, pae(envelope.payloadType, payload), publicKey, signatureBytes),
+    'Invalid promotion DSSE signature');
   try {
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(payload));
   } catch {
@@ -133,7 +131,7 @@ export function verifyPromotionAttestation({ repo, envelope, publicKey, expected
   const subject = statement.subject[0];
   const predicate = statement.predicate;
   requireThat(subject && typeof subject.name === 'string' && subject.name.startsWith('refs/heads/') &&
-    subject.digest && predicate?.version === 1 && typeof predicate.operation === 'string' && OPERATION.test(predicate.operation) &&
+    subject.digest && predicate?.version === 1 &&
     predicate.targetRef === subject.name && typeof predicate.parentCommit === 'string' && OID.test(predicate.parentCommit) &&
     typeof predicate.approvalDigest === 'string' && SHA256.test(predicate.approvalDigest) &&
     typeof predicate.planDigest === 'string' && SHA256.test(predicate.planDigest) &&

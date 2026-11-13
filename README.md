@@ -40,7 +40,9 @@ Use `node src/cli.mjs refinement manifest.json witness-request.json` on Linux to
 
 Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it. The initial attempt plus `policy.maxRepairs` is the total attempt allowance. Requeue keeps the original deadline and charges any attempt already reserved.
 
-Set `policy.validUntilMs` to an absolute Unix timestamp in milliseconds to limit approval validity. The controller refuses dispatch and new promotion at or after that time. A delegated revision may shorten the period. The clock is the controller host's clock.
+Set `policy.validUntilMs` to an absolute Unix timestamp in milliseconds to limit approval validity. The controller checks its host clock at dispatch and when authorizing a ref update. A delegated revision may shorten the period.
+
+Run `node src/cli.mjs revoke manifest.json <approval-digest>` to revoke an exact approval in the manifest's journal. Existing attempts lose authority, and that digest cannot authorize new attempts or delegated revisions. An already completed ref update can still be recorded during recovery. Previously approved revisions with distinct digests retain their own authority.
 
 `status` includes verifier verdict mismatches with the attempt, obligation, candidate snapshot and evidence identity. Held-out failures stay in the controller journal. Retry prompts receive the generic refusal and any explicitly approved feedback.
 
@@ -53,6 +55,17 @@ To choose the Pi model, set `policy.modelRoute` to an ordered list of exact `{pr
 Set `policy.maxToolCalls` to cap Pi tool calls and `policy.maxVerificationMs` to cap the sum of timeouts reserved for new verifier executions. Both allowances are shared by a task's attempts and survive restart. Feedback checks and final verification draw from the same verifier allowance. A cache hit uses no new verifier reservation.
 
 To revert a landed change, create and approve a new task with `revertOperation` set to the earlier promotion operation ID. Give it the scope and checks for the restored behavior. Verity applies the inverse patch to the current target in a disposable checkout and sends that candidate through the normal verification and promotion gates.
+
+### Share a promotion attestation
+
+Use an Ed25519 private key in PEM format to sign a recorded promotion. Give the recipient the envelope, the trusted public key, and the expected full Git commit ID.
+
+```sh
+node src/cli.mjs attest manifest.json <operation> <private-key.pem> > envelope.json
+node src/cli.mjs verify-attestation <repository> <commit> envelope.json <public-key.pem>
+```
+
+Verification checks the signature and the immutable commit, tree, parent, and receipt trailer. The signed summary includes per-claim assurance and approved exception IDs. The journal retains the full receipt, risk text, and held-out observations. Keep the private key under controller control.
 
 ## Evidence and operating scope
 

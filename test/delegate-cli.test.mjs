@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { approve } from '../examples/setup.mjs';
 import { approvedTask } from '../src/contracts.mjs';
+import { Journal } from '../src/journal.mjs';
 
 const run = promisify(execFile);
 
@@ -44,4 +45,14 @@ test('the CLI returns a bound successor from the principal-approved predecessor'
   await writeFile(proposal, JSON.stringify(proposed));
   await writeFile(manifest, JSON.stringify({ tasks: [{ ...parent, approval: 'forged' }] }));
   await assert.rejects(run(process.execPath, cli), error => error.code === 1 && /approval/i.test(error.stderr));
+  await writeFile(proposal, JSON.stringify(proposed));
+  const journalPath = join(directory, 'authority.sqlite');
+  await writeFile(manifest, JSON.stringify({ tasks: [parent], journal: journalPath }));
+  const journal = new Journal(journalPath);
+  try {
+    journal.revokeApproval(parent.approval);
+  } finally {
+    journal.close();
+  }
+  await assert.rejects(run(process.execPath, cli), error => error.code === 1 && /Predecessor approval revoked/.test(error.stderr));
 });

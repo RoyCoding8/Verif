@@ -451,7 +451,7 @@ test('records an approved coverage exception while still requiring the candidate
   }
 });
 
-test('recovers a real Git ref update interrupted before the journal commit', async t => {
+test('recovers a real Git ref update interrupted before the journal commit, even after revocation', async t => {
   const fixtureSettings = await fixture(t);
   const settings = { ...fixtureSettings, tasks: [fixtureSettings.tasks[1]], worker: fixtureWorker };
   const updateRef = GitRepo.prototype.updateRef;
@@ -471,6 +471,7 @@ test('recovers a real Git ref update interrupted before the journal commit', asy
     prepared = journal.getPending(ref);
     assert.equal(prepared.status, 'prepared');
     assert.equal(new GitRepo(settings.repository).readRef(ref), prepared.next);
+    journal.revokeApproval(prepared.contract);
   } finally {
     journal.close();
   }
@@ -480,4 +481,31 @@ test('recovers a real Git ref update interrupted before the journal commit', asy
   const [result] = await runTasks({ ...settings, worker: async () => assert.fail('Recovery dispatched the worker again') });
   assert.equal(result.commit, prepared.next);
   assert.equal(result.operation, prepared.id);
+});
+
+test('revoking a running approval refuses the candidate and future dispatches', async t => {
+  const settings = await fixture(t);
+  const task = settings.tasks[1];
+  const repo = new GitRepo(settings.repository);
+  const head = repo.readRef(task.policy.ref);
+  const [refused] = await runTasks({ ...settings, tasks: [task], worker: async job => {
+    await fixtureWorker(job);
+    const journal = new Journal(settings.journalPath);
+    try {
+      journal.revokeApproval(task.approval);
+    } finally {
+      journal.close();
+    }
+  } });
+  assert.equal(refused.status, 'refused');
+  assert.match(refused.reason, /no longer authorizes verification/);
+  assert.equal(repo.readRef(task.policy.ref), head);
+  const [newRun] = await runTasks({ ...settings, tasks: [task, settings.tasks[0]], maxWorkers: 1,
+    worker: job => {
+      assert.notEqual(job.scope.write[0], task.scope.write[0], 'Revoked task was dispatched again');
+      return fixtureWorker(job);
+    },
+  });
+  assert.equal(newRun.status, 'refused');
+  assert.match(newRun.reason, /approval digest .* has been revoked/);
 });

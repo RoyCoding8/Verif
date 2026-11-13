@@ -1,15 +1,44 @@
 #!/usr/bin/env node
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { createPrivateKey, createPublicKey } from 'node:crypto';
+import { lstat, mkdir, readFile, realpath } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
-import { digest, hash, makeContract, planVerification, requireThat, safePath } from './contracts.mjs';
+import { approvedTask, digest, hash, makeContract, planVerification, requireThat, safePath } from './contracts.mjs';
 import { reviseApprovedTask } from './delegation-policy.mjs';
+import { GitRepo } from './git.mjs';
 import { Journal } from './journal.mjs';
 import { proposeTask } from './planner.mjs';
+import { createPromotionAttestation, verifyPromotionAttestation } from './promotion-attestation.mjs';
 import { verifyRefinement } from './refinement-proof.mjs';
 import { authorizeSemanticRevision } from './semantic-delegation.mjs';
 import { inspectRun, recoverOperation, runTasks } from './verity.mjs';
 
-const usage = 'Usage: verity propose <manifest> | plan <manifest> | delegate <manifest> <proposed-task.json> | refinement <manifest> <witness-request.json> | run <manifest> | status <manifest> | requeue <manifest> <task> | receipt <manifest> <operation> | cancel <manifest> <attempt> | recover <manifest> <operation> [--abandon]';
+const usage = 'Usage: verity propose <manifest> | plan <manifest> | delegate <manifest> <proposed-task.json> | refinement <manifest> <witness-request.json> | run <manifest> | status <manifest> | requeue <manifest> <task> | receipt <manifest> <operation> | cancel <manifest> <attempt> | revoke <manifest> <approval-digest> | recover <manifest> <operation> [--abandon]\n' +
+  '       verity attest <manifest> <operation> <private-key.pem> | verify-attestation <repository> <commit> <envelope.json> <public-key.pem>';
+
+async function checkAttestation([repository, expectedCommit, envelopeFile, publicKeyFile, ...extra]) {
+  requireThat(repository && expectedCommit && envelopeFile && publicKeyFile && !extra.length, usage);
+  const stats = await lstat(envelopeFile);
+  requireThat(stats.isFile() && stats.size <= 2 * 1024 * 1024, 'Invalid or oversized attestation envelope');
+  const envelope = JSON.parse(await readFile(envelopeFile, 'utf8'));
+  const publicKey = createPublicKey(await readFile(publicKeyFile));
+  return verifyPromotionAttestation({ repo: new GitRepo(resolve(repository)), envelope, publicKey, expectedCommit });
+}
+
+async function requireDelegationAuthority(journalPath, parent) {
+  requireThat(Date.now() < (parent.contract.policy.validUntilMs ?? Infinity), 'Predecessor approval expired');
+  try {
+    await lstat(journalPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  const journal = new Journal(journalPath);
+  try {
+    requireThat(!journal.isApprovalRevoked(parent.approval), 'Predecessor approval revoked');
+  } finally {
+    journal.close();
+  }
+}
 
 async function checkRefinement(settings, entries, filename) {
   const requestFile = await lstat(filename);
@@ -48,13 +77,24 @@ async function main() {
     console.log(usage);
     return;
   }
-  requireThat(filename && ['propose', 'plan', 'delegate', 'refinement', 'run', 'status', 'requeue', 'receipt', 'cancel', 'recover'].includes(command) && !rest.length, usage);
+  if (command === 'verify-attestation') return checkAttestation([filename, id, option, ...rest]);
+  requireThat(filename && ['propose', 'plan', 'delegate', 'refinement', 'run', 'status', 'requeue', 'receipt', 'cancel', 'revoke', 'recover', 'attest'].includes(command) && !rest.length, usage);
   requireThat(['propose', 'plan', 'run', 'status'].includes(command) ? !id : id, usage);
-  requireThat(option === undefined || (command === 'recover' && option === '--abandon'), usage);
+  requireThat(command === 'attest' ? option : option === undefined || (command === 'recover' && option === '--abandon'), usage);
   const manifest = JSON.parse(await readFile(filename, 'utf8'));
   const directory = dirname(resolve(filename));
   const oracleRoot = resolve(directory, manifest.oracles ?? 'oracles');
   const scratch = resolve(directory, manifest.scratch ?? '.verity');
+  const journalPath = resolve(directory, manifest.journal ?? '.verity/journal.sqlite');
+  if (command === 'revoke') {
+    await mkdir(dirname(journalPath), { recursive: true });
+    const journal = new Journal(journalPath);
+    try {
+      return journal.revokeApproval(id);
+    } finally {
+      journal.close();
+    }
+  }
   if (command === 'delegate') {
     const input = JSON.parse(await readFile(id, 'utf8'));
     requireThat(input && typeof input === 'object', 'Invalid delegation request');
@@ -62,13 +102,17 @@ async function main() {
     requireThat(Array.isArray(manifest.tasks), 'Missing approved tasks');
     const matching = manifest.tasks.filter(task => task.id === proposal?.id);
     requireThat(matching.length === 1, 'Expected one approved predecessor for the proposed task');
+    const parent = approvedTask(matching[0]);
+    await requireDelegationAuthority(journalPath, parent);
     if (input.witness) {
       const controller = new AbortController();
       const interrupt = () => controller.abort(new Error('Interrupted'));
       process.once('SIGINT', interrupt);
       try {
-        return await authorizeSemanticRevision({ parent: matching[0], proposal, claim: input.witness.claim,
+        const result = await authorizeSemanticRevision({ parent: matching[0], proposal, claim: input.witness.claim,
           solution: input.witness.solution, oracleRoot, scratch, signal: controller.signal });
+        await requireDelegationAuthority(journalPath, parent);
+        return result;
       } finally {
         process.off('SIGINT', interrupt);
       }
@@ -86,7 +130,7 @@ async function main() {
   if (command === 'refinement') return checkRefinement({ oracleRoot, scratch }, manifest.refinements, id);
   const settings = {
     repository: resolve(directory, manifest.repository),
-    journalPath: resolve(directory, manifest.journal ?? '.verity/journal.sqlite'),
+    journalPath,
     oracleRoot,
     scratch,
     tasks: manifest.tasks,
@@ -119,6 +163,12 @@ async function main() {
     }
     const operation = journal.getOperation(id);
     requireThat(operation, 'Unknown operation ' + id);
+    if (command === 'attest') {
+      const repository = await realpath(settings.repository);
+      requireThat(operation.receipt.repository === repository, 'Operation does not belong to this repository');
+      const privateKey = createPrivateKey(await readFile(option));
+      return createPromotionAttestation({ repo: new GitRepo(repository), operation, privateKey });
+    }
     return operation;
   } finally {
     journal.close();

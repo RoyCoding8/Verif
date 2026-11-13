@@ -10,6 +10,14 @@ function requireString(value, name) {
   return value;
 }
 
+function requireApprovalDigest(value) {
+  value = requireString(value, 'approval');
+  if (!/^[0-9a-f]{64}$/.test(value)) {
+    throw new TypeError('approval must be a canonical lowercase SHA-256 digest');
+  }
+  return value;
+}
+
 function canonicalJsonValue(value, name) {
   const json = JSON.stringify(value);
   if (json === undefined) throw new TypeError(`${name} must be JSON serializable`);
@@ -99,6 +107,9 @@ export class Journal {
         claim INTEGER,
         CHECK ((run_id IS NULL AND task_id IS NULL AND claim IS NULL) OR
                (run_id IS NOT NULL AND task_id IS NOT NULL AND claim IS NOT NULL AND claim > 0))
+      );
+      CREATE TABLE IF NOT EXISTS revoked_approvals (
+        approval TEXT PRIMARY KEY CHECK (length(approval) = 64 AND approval NOT GLOB '*[^0-9a-f]*')
       );
       CREATE TABLE IF NOT EXISTS operations (
         id TEXT PRIMARY KEY,
@@ -212,6 +223,22 @@ export class Journal {
     }
   }
 
+  #isApprovalRevoked(approval) {
+    return Boolean(this.#db.prepare('SELECT 1 FROM revoked_approvals WHERE approval = ?').get(approval));
+  }
+
+  isApprovalRevoked(approval) {
+    return this.#isApprovalRevoked(requireApprovalDigest(approval));
+  }
+
+  revokeApproval(approval) {
+    approval = requireApprovalDigest(approval);
+    return this.#transaction(() => {
+      const inserted = this.#db.prepare('INSERT OR IGNORE INTO revoked_approvals (approval) VALUES (?)').run(approval);
+      return { approval, status: inserted.changes === 1 ? 'revoked' : 'already_revoked' };
+    });
+  }
+
   registerAttempt({ id, contract, policy, runId, taskId, claim }) {
     id = requireString(id, 'id');
     contract = requireString(contract, 'contract');
@@ -223,6 +250,9 @@ export class Journal {
       if (!Number.isSafeInteger(claim) || claim < 1) throw new TypeError('claim must be a positive safe integer');
     }
     return this.#transaction(() => {
+      if (this.#isApprovalRevoked(contract)) {
+        throw new Error(`approval digest ${contract} has been revoked; refusing attempt registration`);
+      }
       const existing = this.#db.prepare('SELECT * FROM attempts WHERE id = ?').get(id);
       if (existing) {
         if (existing.contract !== contract || existing.policy !== policy ||
@@ -264,7 +294,7 @@ export class Journal {
       FROM attempts WHERE id = ?
     `).get(id);
     if (!row) return null;
-    let active = row.active === 1;
+    let active = row.active === 1 && !this.#isApprovalRevoked(row.contract);
     if (active && row.run_id !== null) {
       const task = this.#db.prepare('SELECT status, claim FROM run_tasks WHERE run_id = ? AND task_id = ?')
         .get(row.run_id, row.task_id);
@@ -360,6 +390,10 @@ export class Journal {
         return operationFromRow(existing);
       }
 
+      if (this.#isApprovalRevoked(values.contract)) {
+        throw new Error(`approval digest ${values.contract} has been revoked; refusing operation ${values.id}`);
+      }
+
       const authority = this.authority(values.attempt);
       if (!authority || !authority.active || authority.contract !== values.contract || authority.policy !== values.policy) {
         throw new Error(`attempt ${values.attempt} does not authorize this operation`);
@@ -411,6 +445,9 @@ export class Journal {
       }
 
       const authority = this.authority(op.attempt);
+      if (this.#isApprovalRevoked(op.contract)) {
+        throw new Error(`approval digest ${op.contract} has been revoked; operation ${id} cannot update ref ${op.ref}`);
+      }
       if (!authority || !authority.active || authority.contract !== op.contract || authority.policy !== op.policy) {
         throw new Error(`attempt ${op.attempt} no longer authorizes operation ${id}`);
       }
