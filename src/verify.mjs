@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { assertExhaustiveDomain, compose, digest, evidenceKeys, hash, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
 import { judgeLean, leanEnvironment } from './lean-judge.mjs';
+import { leanClaimChallenge, readLeanDefinitions } from './lean-claim.mjs';
 import { proofSources } from './proof-dependencies.mjs';
 
 const execute = promisify(execFile);
@@ -13,7 +14,7 @@ const environment = { runtime: process.version, platform: process.platform, arch
 const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './contracts.mjs'].map(async path =>
   hash(await readFile(new URL(path, import.meta.url))))));
 const proofEnvironment = { ...environment, lean: leanEnvironment,
-  adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs', './proof-dependencies.mjs'].map(async path =>
+  adapter: digest(await Promise.all(['./verify.mjs', './lean-judge.mjs', './lean-claim.mjs', './proof-dependencies.mjs'].map(async path =>
     hash(await readFile(new URL(path, import.meta.url)))))) };
 
 function environmentFor(plan) {
@@ -99,10 +100,15 @@ function nodeInputs(cases, obligation, claim, manifest) {
   return inputs;
 }
 
-async function prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies) {
+async function prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies, oracleRoot) {
   if (obligation.method !== 'lean-comparator') return { cases: oracle, inputs: nodeInputs(oracle, obligation, claim, manifest) };
   const parsed = parseLeanOracle(oracle);
   requireThat(parsed.theorem === obligation.cases[0], 'Lean theorem does not match obligation ' + obligation.id);
+  if (claim.lean?.obligation === obligation.id) {
+    const definitions = await readLeanDefinitions(oracleRoot, claim.lean);
+    requireThat(parsed.challenge === leanClaimChallenge(claim.lean, parsed.theorem, definitions),
+      'Lean oracle does not prove the bound claim ' + claim.id);
+  }
   const proof = proofSources(parsed.theorem, parsed.solution, dependencies, manifest);
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   const source = (await Promise.all(proof.sources.map(async ({ path }) => decoder.decode(await regularFile(workspace, path))))).join('\n\n');
@@ -196,7 +202,7 @@ async function runObligation({ repo, task, obligation, claim, commit, oracleRoot
     await assertMaterialization(workspace, manifest);
     const oracle = JSON.parse(bytes.toString('utf8'));
     requireThat(dependencies.length === (obligation.proofDependencies?.length ?? 0), 'Missing verified proof dependencies');
-    const prepared = await prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies);
+    const prepared = await prepareOracle(oracle, obligation, claim, workspace, manifest, dependencies, oracleRoot);
     const timeout = Math.min(obligation.timeoutMs, deadline - Date.now());
     requireThat(timeout > 0, 'Task budget expired');
     const cacheEnabled = cacheAuthority(journal, attempt, task, obligation);

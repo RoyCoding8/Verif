@@ -6,6 +6,7 @@ import { reviseApprovedTask } from './delegation-policy.mjs';
 import { Journal } from './journal.mjs';
 import { proposeTask } from './planner.mjs';
 import { verifyRefinement } from './refinement-proof.mjs';
+import { authorizeSemanticRevision } from './semantic-delegation.mjs';
 import { inspectRun, recoverOperation, runTasks } from './verity.mjs';
 
 const usage = 'Usage: verity propose <manifest> | plan <manifest> | delegate <manifest> <proposed-task.json> | refinement <manifest> <witness-request.json> | run <manifest> | status <manifest> | requeue <manifest> <task> | receipt <manifest> <operation> | cancel <manifest> <attempt> | recover <manifest> <operation> [--abandon]';
@@ -51,11 +52,27 @@ async function main() {
   requireThat(['propose', 'plan', 'run', 'status'].includes(command) ? !id : id, usage);
   requireThat(option === undefined || (command === 'recover' && option === '--abandon'), usage);
   const manifest = JSON.parse(await readFile(filename, 'utf8'));
+  const directory = dirname(resolve(filename));
+  const oracleRoot = resolve(directory, manifest.oracles ?? 'oracles');
+  const scratch = resolve(directory, manifest.scratch ?? '.verity');
   if (command === 'delegate') {
-    const proposal = JSON.parse(await readFile(id, 'utf8'));
+    const input = JSON.parse(await readFile(id, 'utf8'));
+    requireThat(input && typeof input === 'object', 'Invalid delegation request');
+    const proposal = input.task ?? input;
     requireThat(Array.isArray(manifest.tasks), 'Missing approved tasks');
     const matching = manifest.tasks.filter(task => task.id === proposal?.id);
     requireThat(matching.length === 1, 'Expected one approved predecessor for the proposed task');
+    if (input.witness) {
+      const controller = new AbortController();
+      const interrupt = () => controller.abort(new Error('Interrupted'));
+      process.once('SIGINT', interrupt);
+      try {
+        return await authorizeSemanticRevision({ parent: matching[0], proposal, claim: input.witness.claim,
+          solution: input.witness.solution, oracleRoot, scratch, signal: controller.signal });
+      } finally {
+        process.off('SIGINT', interrupt);
+      }
+    }
     return reviseApprovedTask(matching[0], proposal);
   }
   if (command === 'plan') {
@@ -66,9 +83,6 @@ async function main() {
       return { id: contract.id, approval: digest(contract), contract, plan };
     });
   }
-  const directory = dirname(resolve(filename));
-  const oracleRoot = resolve(directory, manifest.oracles ?? 'oracles');
-  const scratch = resolve(directory, manifest.scratch ?? '.verity');
   if (command === 'refinement') return checkRefinement({ oracleRoot, scratch }, manifest.refinements, id);
   const settings = {
     repository: resolve(directory, manifest.repository),

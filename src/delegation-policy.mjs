@@ -52,10 +52,11 @@ function byId(items) {
   return new Map(items.map(item => [item.id, item]));
 }
 
-function requirePlanDoesNotReplace(parentPlan, candidatePlan) {
+function requirePlanDoesNotReplace(parentPlan, candidatePlan, semantic) {
   const nextClaims = byId(candidatePlan.claims);
   const nextObligations = byId(candidatePlan.obligations);
   for (const claim of parentPlan.claims) {
+    if (claim.id === semantic?.claim) continue;
     requireThat(nextClaims.has(claim.id) && same(claim, nextClaims.get(claim.id)),
       'Delegation removes or changes claim ' + claim.id);
   }
@@ -73,7 +74,7 @@ function requirePlanDoesNotReplace(parentPlan, candidatePlan) {
   }
 }
 
-export function reviseApprovedTask(parentInput, proposal) {
+function revision(parentInput, proposal, semantic) {
   const parent = approvedTask(parentInput);
   requireThat(parent.contract.policy.delegation === 'monotonic', 'Parent task does not authorize monotonic delegation');
 
@@ -85,7 +86,7 @@ export function reviseApprovedTask(parentInput, proposal) {
   requireThat(contract.revision === parent.contract.revision + 1, 'Delegation revision must advance exactly once');
   requirePolicyDoesNotWeaken(parent.contract.policy, contract.policy);
   requireScopeDoesNotExpand(parent.contract.scope, contract.scope);
-  requirePlanDoesNotReplace(parent.plan, plan);
+  requirePlanDoesNotReplace(parent.plan, plan, semantic);
 
   const approval = digest(contract);
   const task = {
@@ -109,5 +110,26 @@ export function reviseApprovedTask(parentInput, proposal) {
     revision: contract.revision,
   };
   const revisionBinding = { ...binding, digest: digest(binding) };
-  return { task, contract, plan, approval, revisionBinding };
+  return { parent, result: { task, contract, plan, approval, revisionBinding } };
+}
+
+export function reviseApprovedTask(parentInput, proposal) {
+  return revision(parentInput, proposal).result;
+}
+
+export function prepareSemanticRevision(parentInput, proposal, claimId) {
+  const { parent, result } = revision(parentInput, proposal, { claim: claimId });
+  const previous = parent.plan.claims.find(claim => claim.id === claimId);
+  const next = result.plan.claims.find(claim => claim.id === claimId);
+  requireThat(previous?.lean && next?.lean, 'Semantic delegation requires a bound Lean claim');
+  const { lean: old, ...oldClaim } = previous;
+  const { lean: successor, ...nextClaim } = next;
+  requireThat(same(oldClaim, nextClaim) && ['source', 'definitionDigest', 'domain', 'implementation'].every(key => old[key] === successor[key]),
+    'Semantic delegation changes the frozen claim or implementation binding');
+  requireThat(!parent.plan.obligations.some(item => item.id === successor.obligation),
+    'Semantic delegation requires a new candidate proof obligation');
+  const predicate = ({ precondition, guarantee, assumptions }) => ({ precondition, guarantee, assumptions });
+  const contract = { definitionDigest: old.definitionDigest, domain: old.domain, old: predicate(old), new: predicate(successor) };
+  const binding = { predecessorApproval: parent.approval, successorApproval: result.approval, claim: claimId };
+  return { parent, result, contract, binding, old, successor };
 }
