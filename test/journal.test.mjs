@@ -350,7 +350,12 @@ test('attempt reservations are shared across connections and survive requeue and
     const reopened = new Journal(path);
     try {
       reopened.registerRun(runId, [task]);
+      for (let index = 0; index < 4; index++) {
+        reopened.startTask(runId, task.id);
+        reopened.requeueTask(runId, task.id);
+      }
       const recovered = reopened.startTask(runId, task.id).claim;
+      assert.ok(recovered > 3);
       assert.throws(() => reopened.registerAttempt({ ...request, id: 'three', claim: recovered }), /attempt budget exhausted/);
       assert.equal(reopened.authority('two').active, false);
     } finally {

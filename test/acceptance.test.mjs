@@ -195,6 +195,21 @@ test('feedback and final verification draw on the same durable task budget', asy
   assert.equal(repo.readRef(task.policy.ref), initial);
 });
 
+test('a changed policy immediately fences the prior feedback grant', async t => {
+  const settings = await fixture(t);
+  const original = settings.tasks[0];
+  const task = approve({ ...original, policy: { ...original.policy, feedbackChecks: ['stock-before'] } });
+  let attempt;
+  const [result] = await runTasks({ ...settings, tasks: [task], onEvent: event => { attempt = event.attempt; }, worker: async job => {
+    const journal = new Journal(settings.journalPath);
+    try { journal.setPolicy(attempt, 'replacement'); } finally { journal.close(); }
+    await assert.rejects(job.runCheck('stock-before'), /no longer authorizes/);
+    await fixtureWorker(job);
+  } });
+  assert.equal(result.status, 'refused');
+  assert.match(result.reason, /does not authorize/);
+});
+
 test('out-of-scope edit and failed oracle do not advance the protected ref', async t => {
   const settings = await fixture(t);
   const repo = new GitRepo(settings.repository);

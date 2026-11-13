@@ -187,6 +187,12 @@ function resourceReservation(journal, attempt, kind, limit) {
   return limit === undefined ? undefined : amount => journal.reserveUsage(attempt, kind, amount, limit);
 }
 
+function feedbackAuthority(journal, attempt, approval, policy) {
+  const authority = journal.authority(attempt);
+  requireThat(authority?.active && authority.contract === approval && authority.policy === policy,
+    'Attempt no longer authorizes feedback checks');
+}
+
 async function runTask(context, task, { claim, startedMs }, prerequisites) {
   const { repo, runId, journal, worker, signal: cancellation, oracleRoot, scratch, onEvent } = context;
   const { contract } = task;
@@ -197,6 +203,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
   const signal = cancellation ? AbortSignal.any([timer, cancellation]) : timer;
   const repairs = contract.policy.maxRepairs ?? 0;
   const feedbackChecks = contract.policy.feedbackChecks ?? [];
+  const policy = digest(contract.policy);
   let diagnosis = '';
   for (let round = 0; round <= repairs; round++) {
     signal.throwIfAborted();
@@ -205,7 +212,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
     requireThat(observedHead, 'Protected ref does not exist');
     const base = contract.base === 'head-at-dispatch' ? observedHead : contract.base;
     requirePrerequisites(repo, base, prerequisites);
-    journal.registerAttempt({ id: attempt, contract: task.approval, policy: digest(contract.policy), runId, taskId: contract.id, claim });
+    journal.registerAttempt({ id: attempt, contract: task.approval, policy, runId, taskId: contract.id, claim });
     let temporary;
     let checking = false;
     try {
@@ -223,7 +230,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
         runCheck: feedbackChecks.length === 0 ? undefined : async (name, options) => {
           requireThat(!checking, 'A feedback check is already running');
           requireThat(feedbackChecks.includes(name), 'Unknown approved check ' + name);
-          requireThat(journal.authority(attempt)?.active, 'Attempt cannot run feedback checks');
+          feedbackAuthority(journal, attempt, task.approval, policy);
           checking = true;
           try {
             const snapshot = repo.capture(workspace, base);
@@ -233,7 +240,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
               reserveVerification: resourceReservation(journal, attempt, 'verification time', contract.policy.maxVerificationMs),
               proofDependencies: resolveProofDependencies(task, runId, prerequisites, journal),
             });
-            requireThat(journal.authority(attempt)?.active, 'Attempt cannot receive feedback checks');
+            feedbackAuthority(journal, attempt, task.approval, policy);
             return result;
           } catch (error) {
             return 'Feedback failed: ' + error.message;

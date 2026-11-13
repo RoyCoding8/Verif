@@ -16,7 +16,7 @@ function stateWithSpentToken(cap) {
   return graph.states.find(state => state.status === 'running' && state.spent > 0 && state.active === null);
 }
 
-test('all finite states preserve token accounting and current-claim authorization', () => {
+test('the three-claim model preserves token accounting and current-claim authorization', () => {
   const expected = new Map([[1, [37, 258]], [2, [111, 776]], [3, [223, 1560]]]);
 
   for (const cap of caps) {
