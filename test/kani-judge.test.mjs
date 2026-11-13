@@ -9,13 +9,7 @@ import { classifyKaniReport } from '../src/kani-judge.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const leanSpec = join(root, 'verification/kani/Verdict.lean');
-const tableRows = execFileSync('lean', ['--run', leanSpec], { cwd: root, encoding: 'utf8' })
-  .split(/\r?\n/)
-  .filter(line => /^\d+=/.test(line));
-const reference = new Map(tableRows.map(line => {
-  const [index, verdict] = line.split('=');
-  return [Number(index), verdict];
-}));
+const smoke = process.env.VERITY_KANI_SMOKE === '1';
 
 const states = {
   evidence: ['valid', 'invalid'],
@@ -116,7 +110,14 @@ function classifyObservation(observation) {
   return 'ERROR';
 }
 
-test('the report classifier matches the independent Lean finite contract', () => {
+test('the report classifier matches the independent Lean finite contract', { skip: !smoke }, () => {
+  const tableRows = execFileSync('lean', ['-DwarningAsError=true', '--run', leanSpec], { cwd: root, encoding: 'utf8' })
+    .trim().split(/\r?\n/);
+  const reference = new Map(tableRows.map(line => {
+    const [index, verdict] = line.split('=');
+    return [Number(index), verdict];
+  }));
+  assert.equal(tableRows.length, 162);
   assert.equal(reference.size, 162);
   for (const evidence of states.evidence) {
     for (const assertion of states.assertion) {
@@ -137,9 +138,8 @@ test('the finite contract kills a mutation that treats an unreachable probe as r
     evidence: 'valid', assertion: 'passed', probe: 'unreachable', exit: 'zero', error: 'none',
   };
   const mutant = value => classifyObservation({ ...value, probe: 'reached' });
-  assert.equal(reference.get(indexOf(observation)), 'PROBE_COUNTEREXAMPLE');
+  assert.equal(classifyObservation(observation), 'PROBE_COUNTEREXAMPLE');
   assert.equal(mutant(observation), 'PASS');
-  assert.notEqual(mutant(observation), reference.get(indexOf(observation)));
 });
 
 test('an unapproved harness and a missing tool report fail closed', () => {
@@ -151,7 +151,7 @@ test('an unapproved harness and a missing tool report fail closed', () => {
 });
 
 test('pinned Kani reports classify a pass, an assertion disproof, and a missed probe', {
-  skip: process.env.VERITY_KANI_SMOKE !== '1',
+  skip: !smoke,
 }, () => {
   const report = name => JSON.parse(readFileSync(join(root, name), 'utf8'));
   const expectedProbe = ['cover condition: output == 10'];

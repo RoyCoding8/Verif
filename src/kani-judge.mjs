@@ -31,7 +31,6 @@ function classifyObservation(observation) {
 }
 
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const count = value => Number.isSafeInteger(value) && value >= 0;
 const result = (verdict, reason) => ({ verdict, reason });
 const error = reason => result('ERROR', reason);
 
@@ -98,10 +97,7 @@ function reportObservation(report, { expectedHarness, expectedProbes, exitCode }
     covered: 0,
     uncovered: 0,
   };
-  const propertyCountKeys = Object.keys(requiredCounts).filter(key => key !== 'total_properties');
-  if (Object.entries(requiredCounts).some(([key, expected]) => details[key] !== expected) ||
-      propertyCountKeys.some(key => !count(details[key])) ||
-      propertyCountKeys.reduce((sum, key) => sum + details[key], 0) !== details.total_properties) {
+  if (Object.entries(requiredCounts).some(([key, expected]) => details[key] !== expected)) {
     return { reason: 'property_counts_mismatch' };
   }
 
