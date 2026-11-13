@@ -29,3 +29,6 @@ jobs:
         env:
           VERITY_PI_SDK_SMOKE: "1"
       - run: npm run demo
+      - name: Check independent shadow evaluation
+        if: runner.os == 'Linux'
+        run: node evaluation/reservation.mjs
