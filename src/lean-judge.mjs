@@ -53,10 +53,20 @@ function sourceText(value, name) {
   }
 }
 
-function checkRequest({ challenge, solution, theorem, timeoutMs, signal, scratch }) {
+function checkRequest({ challenge, solution, theorem, theorems, timeoutMs, signal, scratch }) {
   sourceText(challenge, 'challenge');
   sourceText(solution, 'solution');
-  if (!theoremNamePattern.test(theorem ?? '')) throw new TypeError('theorem must be a simple qualified Lean identifier');
+  if ((theorem === undefined) === (theorems === undefined)) {
+    throw new TypeError('provide exactly one of theorem or theorems');
+  }
+  const theoremNames = theorem === undefined
+    ? (Array.isArray(theorems) ? [...theorems] : theorems)
+    : [theorem];
+  if (!Array.isArray(theoremNames) || theoremNames.length === 0 ||
+      theoremNames.some(name => typeof name !== 'string' || !theoremNamePattern.test(name)) ||
+      new Set(theoremNames).size !== theoremNames.length) {
+    throw new TypeError('theorem names must be distinct simple qualified Lean identifiers in a nonempty list');
+  }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
     throw new TypeError('timeoutMs must be a positive safe integer no greater than 2147483647');
   }
@@ -66,6 +76,7 @@ function checkRequest({ challenge, solution, theorem, timeoutMs, signal, scratch
     throw new TypeError('signal must be an AbortSignal');
   }
   signal?.throwIfAborted();
+  return theoremNames;
 }
 
 function commandEnvironment() {
@@ -166,11 +177,11 @@ async function prepareProject(directory, name, sourceFile, sourceTextValue, lake
   ]);
 }
 
-async function runComparator(directory, challengeExport, theorem, env, deadline, signal) {
+async function runComparator(directory, challengeExport, theoremNames, env, deadline, signal) {
   const config = {
     challenge_module: 'Challenge',
     solution_module: 'Solution',
-    theorem_names: [theorem],
+    theorem_names: theoremNames,
     permitted_axioms: permittedAxioms,
   };
   await writeFile(join(directory, 'comparator.json'), JSON.stringify(config, null, 2) + '\n', { flag: 'wx' });
@@ -193,8 +204,8 @@ async function runComparator(directory, challengeExport, theorem, env, deadline,
   }
 }
 
-export async function judgeLean({ challenge, solution, theorem, timeoutMs, signal, scratch }) {
-  checkRequest({ challenge, solution, theorem, timeoutMs, signal, scratch });
+export async function judgeLean({ challenge, solution, theorem, theorems, timeoutMs, signal, scratch }) {
+  const theoremNames = checkRequest({ challenge, solution, theorem, theorems, timeoutMs, signal, scratch });
   if (process.platform !== 'linux') throw new Error('Lean proof judging requires Linux with Lake comparator bubblewrap support');
   const deadline = Date.now() + timeoutMs;
   const env = commandEnvironment();
@@ -219,7 +230,7 @@ export async function judgeLean({ challenge, solution, theorem, timeoutMs, signa
     });
     await exportChallenge(challengeProject, challengeExport, env, deadline, signal);
     await prepareProject(solutionProject, 'verity_lean_solution', 'Solution.lean', solution, solutionLakefile);
-    return await runComparator(solutionProject, challengeExport, theorem, env, deadline, signal);
+    return await runComparator(solutionProject, challengeExport, theoremNames, env, deadline, signal);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
