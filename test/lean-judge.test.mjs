@@ -140,6 +140,7 @@ exit 77
       timeoutMs: 10000,
       scratch: root,
     });
+    await rm(join(bin, 'require-second'));
     assert.equal(linkedAccepted.accepted, true);
 
     await writeFile(join(bin, 'exit'), '1');
