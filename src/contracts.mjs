@@ -299,6 +299,8 @@ export function makeContract(input, plan) {
   requireThat(base === 'head-at-dispatch' || /^[a-f0-9]{40}([a-f0-9]{24})?$/.test(base), 'Invalid task base');
   requireThat(typeof policy?.ref === 'string' && policy.ref.startsWith('refs/heads/'), 'Invalid protected branch');
   requireThat(Number.isSafeInteger(policy.budgetMs) && policy.budgetMs > 0 && policy.budgetMs <= 2_147_483_647, 'Invalid task budget');
+  requireThat(!Object.hasOwn(policy, 'validUntilMs') || Number.isSafeInteger(policy.validUntilMs) && policy.validUntilMs > 0,
+    'Invalid approval expiration time');
   const maxRepairs = policy.maxRepairs ?? 0;
   requireThat(Number.isSafeInteger(maxRepairs) && maxRepairs >= 0 && maxRepairs < Number.MAX_SAFE_INTEGER, 'Invalid repair limit');
   for (const limit of ['maxToolCalls', 'maxVerificationMs']) {

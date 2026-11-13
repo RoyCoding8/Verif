@@ -40,6 +40,8 @@ Use `node src/cli.mjs refinement manifest.json witness-request.json` on Linux to
 
 Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it. The initial attempt plus `policy.maxRepairs` is the total attempt allowance. Requeue keeps the original deadline and charges any attempt already reserved.
 
+Set `policy.validUntilMs` to an absolute Unix timestamp in milliseconds to limit approval validity. The controller refuses dispatch and new promotion at or after that time. A delegated revision may shorten the period. The clock is the controller host's clock.
+
 `status` includes verifier verdict mismatches with the attempt, obligation, candidate snapshot and evidence identity. Held-out failures stay in the controller journal. Retry prompts receive the generic refusal and any explicitly approved feedback.
 
 A principal can turn a confirmed refusal into worker guidance with `policy.lessons`. Each entry names the recorded `attempt` and `evidence`, approved `diagnosis` text, and a current positive candidate obligation as `regression`. Verity checks the historical record before dispatch and includes the approved diagnosis in the worker prompt.

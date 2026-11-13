@@ -1,7 +1,7 @@
 import { approvedTask, digest, makeContract, planVerification, requireThat } from './contracts.mjs';
 
 const resourceLimits = ['maxToolCalls', 'maxVerificationMs'];
-const policyFields = new Set(['budgetMs', 'delegation', 'maxRepairs', 'ref', 'reuseEvidence', ...resourceLimits]);
+const policyFields = new Set(['budgetMs', 'delegation', 'maxRepairs', 'ref', 'reuseEvidence', 'validUntilMs', ...resourceLimits]);
 
 function same(left, right) {
   return digest(left) === digest(right);
@@ -38,6 +38,7 @@ function requirePolicyDoesNotWeaken(parent, candidate) {
     'Parent task does not authorize monotonic delegation');
   requireThat(candidate.ref === parent.ref && candidate.budgetMs <= parent.budgetMs &&
     (candidate.maxRepairs ?? 0) <= (parent.maxRepairs ?? 0), 'Delegation weakens task policy');
+  requireThat((candidate.validUntilMs ?? Infinity) <= (parent.validUntilMs ?? Infinity), 'Delegation extends approval validity');
   requireThat(same(candidate.reuseEvidence ?? null, parent.reuseEvidence ?? null), 'Delegation changes evidence reuse policy');
   requireThat(resourceLimits.every(limit => (candidate[limit] ?? Infinity) <= (parent[limit] ?? Infinity)),
     'Delegation expands a resource limit');

@@ -338,6 +338,7 @@ export function decide({ task, receipt, authority, base, candidate, manifests, c
   try {
     const { contract, plan, approval } = task;
     requireThat(authority?.active && authority.contract === approval && authority.policy === digest(contract.policy), 'Inactive or stale authority');
+    requireThat(now < (contract.policy.validUntilMs ?? Infinity), 'Approval expired');
     requireThat(now < deadline, 'Task budget expired');
     requireThat(digest(contract) === approval && digest(plan) === contract.plan, 'Unapproved contract or plan');
     requireThat(receipt.version === 1 && receipt.contract === approval && receipt.plan === contract.plan &&

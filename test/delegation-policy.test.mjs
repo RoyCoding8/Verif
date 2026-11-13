@@ -74,6 +74,22 @@ test('refuses successors without explicit parent delegation opt-in', () => {
   assert.throws(() => reviseApprovedTask(parent, successor(parent)), /does not authorize monotonic delegation/);
 });
 
+test('delegation can add or shorten approval validity', () => {
+  const parent = approve(task());
+  const proposal = successor(parent);
+  proposal.policy.validUntilMs = 10_000;
+  const bound = reviseApprovedTask(parent, proposal).task;
+  const next = successor(bound);
+  next.policy.validUntilMs = 9_999;
+  assert.equal(reviseApprovedTask(bound, next).contract.policy.validUntilMs, 9_999);
+  next.policy.validUntilMs = 10_001;
+  assert.throws(() => reviseApprovedTask(bound, next), /extends approval validity/);
+  delete next.policy.validUntilMs;
+  assert.throws(() => reviseApprovedTask(bound, next), /extends approval validity/);
+  next.policy.validUntilMs = '10000';
+  assert.throws(() => reviseApprovedTask(bound, next), /Invalid approval expiration time/);
+});
+
 test('rejects identity, authorization, policy, scope, and frozen-plan substitutions', () => {
   const parent = approve(task());
   const badProposals = [

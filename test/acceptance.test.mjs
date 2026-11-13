@@ -21,6 +21,9 @@ async function fixture(t) {
 
 test('parallel candidates integrate against current head and unlock the dependent task', async t => {
   const settings = await fixture(t);
+  const [original, ...remaining] = settings.tasks;
+  const validUntilMs = Date.now() + 180_000;
+  settings.tasks = [approve({ ...original, policy: { ...original.policy, validUntilMs } }), ...remaining];
   const repo = new GitRepo(settings.repository);
   const initial = repo.readRef('refs/heads/protected');
   let inProgress = 0;
@@ -57,6 +60,8 @@ test('parallel candidates integrate against current head and unlock the dependen
       changedPaths: ['reserve.mjs'],
     };
     assert.deepEqual(decide(decisionInput), { promote: true });
+    assert.deepEqual(decide({ ...decisionInput, now: validUntilMs, deadline: validUntilMs + 1 }),
+      { promote: false, reason: 'Approval expired' });
     const modified = structuredClone(receipt);
     modified.results[1].artifacts['cases.json'].base64 = 'dGFtcGVyZWQ=';
     assert.deepEqual(decide({ ...decisionInput, receipt: modified }), { promote: false, reason: 'Receipt artifact mismatch' });
@@ -71,6 +76,18 @@ test('parallel candidates integrate against current head and unlock the dependen
     worker: async () => assert.fail('A completed approved run must not dispatch a worker again'),
   });
   assert.deepEqual(replay, results);
+});
+
+test('an expired approval refuses without dispatching a worker or moving the ref', async t => {
+  const settings = await fixture(t);
+  const original = settings.tasks[1];
+  const task = approve({ ...original, policy: { ...original.policy, validUntilMs: Date.now() - 1 } });
+  const repo = new GitRepo(settings.repository);
+  const head = repo.readRef(task.policy.ref);
+  const [result] = await runTasks({ ...settings, tasks: [task], worker: () => assert.fail('Expired approval dispatched') });
+  assert.equal(result.status, 'refused');
+  assert.equal(result.reason, 'Approval expired');
+  assert.equal(repo.readRef(task.policy.ref), head);
 });
 
 test('orthogonal scheduling dispatches projected siblings together and serializes overlapping inputs', async t => {

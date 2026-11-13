@@ -209,8 +209,11 @@ function requireAttemptAuthority(journal, attempt, approval, policy, operation) 
 async function runTask(context, task, { claim, startedMs }, prerequisites) {
   const { repo, runId, journal, worker, signal: cancellation, oracleRoot, scratch, onEvent } = context;
   const { contract } = task;
-  const deadline = startedMs + contract.policy.budgetMs;
-  const remaining = deadline - Date.now();
+  const now = Date.now();
+  const validUntil = contract.policy.validUntilMs ?? Infinity;
+  requireThat(now < validUntil, 'Approval expired');
+  const deadline = Math.min(startedMs + contract.policy.budgetMs, validUntil);
+  const remaining = deadline - now;
   requireThat(remaining > 0, 'Task budget expired');
   const timer = AbortSignal.timeout(remaining);
   const signal = cancellation ? AbortSignal.any([timer, cancellation]) : timer;
