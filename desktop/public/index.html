@@ -2,27 +2,132 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Verity</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="app" id="app">
-  <header class="titlebar"><span class="mark">V</span><span>Verity</span></header>
+  <header class="titlebar">
+    <div class="tb-left">
+      <span class="mark" aria-hidden="true">V</span>
+      <span class="wordmark">Verity</span>
+      <div class="nav-arrows">
+        <button class="icon-btn" id="nav-back" title="Back" aria-label="Back">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn" id="nav-forward" title="Forward" aria-label="Forward">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </div>
+    <nav class="tabbar" id="tabbar" aria-label="Open views">
+      <button class="tab is-active" data-tab="files" id="tab-files">Files</button>
+      <button class="tab-add" id="tab-add" title="New task" aria-label="New task">
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </nav>
+    <div class="tb-right">
+      <button class="icon-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="8" r="5.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2.8a5.2 5.2 0 0 1 0 10.4z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
   <div class="shell">
     <aside class="sidebar">
-      <div class="brand">Verity</div>
-      <button id="new-task">New task</button>
-      <div class="thread-list" id="thread-list"></div>
-      <div class="side-foot"><span id="host">&mdash;</span></div>
-    </aside>
-    <main class="center">
-      <div class="transcript" id="transcript"></div>
-      <div class="composer">
-        <textarea id="goal"></textarea>
-        <button id="send">Run</button>
+      <div class="brand-row">
+        <span class="mark" aria-hidden="true">V</span>
+        <div class="brand-text">
+          <div class="brand-name">Verity</div>
+          <div class="brand-sub">Verification harness</div>
+        </div>
       </div>
+
+      <button class="btn-primary btn-block" id="new-task">New task</button>
+
+      <div class="side-group">
+        <div class="side-label">Projects</div>
+        <button class="project-row" id="project-row" type="button">
+          <span class="project-name">Reservation demo</span>
+          <span class="project-meta mono">demo</span>
+        </button>
+      </div>
+
+      <div class="side-group grow">
+        <div class="side-label">Threads</div>
+        <div class="thread-list" id="thread-list"></div>
+      </div>
+
+      <div class="side-foot">
+        <span class="mono" id="host"></span>
+      </div>
+    </aside>
+
+    <main class="center" id="center">
+      <section class="thread-view" id="thread-view">
+        <header class="thread-head">
+          <h1 class="thread-title" id="thread-title">New task</h1>
+          <span class="chip chip-idle" id="thread-status">Idle</span>
+        </header>
+        <div class="transcript" id="transcript"></div>
+        <footer class="composer">
+          <label class="field-label" for="goal">Goal</label>
+          <textarea id="goal" rows="3" placeholder="Describe the task for the controller."></textarea>
+          <div class="composer-row">
+            <div class="field">
+              <label class="field-label" for="task">Task</label>
+              <select id="task"></select>
+            </div>
+            <div class="field field-mode">
+              <label class="field-label" for="mode">Mode</label>
+              <select id="mode">
+                <option value="fixture">Fixture</option>
+                <option value="pi">Pi</option>
+              </select>
+            </div>
+            <button class="btn-primary btn-run" id="send">Run</button>
+          </div>
+          <div class="status-bar">
+            <span class="mono" id="ws-host"></span>
+            <span class="mono">refs/heads/protected</span>
+            <span id="mode-note"></span>
+          </div>
+        </footer>
+      </section>
+
+      <section class="files-view" id="files-view" hidden>
+        <div class="file-pane">
+          <div class="side-label">Files</div>
+          <div class="file-list" id="file-list"></div>
+          <form class="file-open" id="file-form">
+            <input class="mono" id="file-path" placeholder="path/to/file" autocomplete="off" spellcheck="false">
+            <button class="btn-quiet" type="submit">Open</button>
+          </form>
+        </div>
+        <div class="file-viewer">
+          <div class="file-head">
+            <span class="mono" id="file-name"></span>
+          </div>
+          <pre class="file-content" id="file-content"></pre>
+        </div>
+      </section>
     </main>
-    <aside class="context"><div class="ctx-card" id="ctx-card"></div></aside>
+
+    <aside class="context">
+      <div class="ctx-card" id="ctx-card">
+        <div class="ctx-title" id="ctx-title">No thread selected</div>
+        <div class="ctx-rows" id="ctx-rows"></div>
+        <div class="ctx-block" id="ctx-results-block" hidden>
+          <div class="side-label">Verification</div>
+          <div class="ctx-results" id="ctx-results"></div>
+        </div>
+        <div class="ctx-block" id="ctx-cost-block" hidden>
+          <div class="side-label">Cost</div>
+          <div class="ctx-cost" id="ctx-cost"></div>
+        </div>
+      </div>
+    </aside>
   </div>
 </div>
 <script src="app.js"></script>
