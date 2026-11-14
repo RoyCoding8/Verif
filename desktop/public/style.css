@@ -1,0 +1,11 @@
+/* Checkpoint placeholder. desktop/public is owned by the desktop-ui job. */
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; }
+.app { display: flex; flex-direction: column; height: 100vh; }
+.titlebar { padding: 8px 12px; border-bottom: 1px solid #ddd; }
+.shell { display: flex; flex: 1; min-height: 0; }
+.sidebar { width: 260px; border-right: 1px solid #ddd; padding: 12px; }
+.center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.transcript { flex: 1; overflow-y: auto; padding: 16px; }
+.composer { border-top: 1px solid #ddd; padding: 12px; display: flex; gap: 8px; }
+.context { width: 280px; border-left: 1px solid #ddd; padding: 12px; }

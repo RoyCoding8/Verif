@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>Verity</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+  <header class="titlebar"><span class="mark">V</span><span>Verity</span></header>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">Verity</div>
+      <button id="new-task">New task</button>
+      <div class="thread-list" id="thread-list"></div>
+      <div class="side-foot"><span id="host">&mdash;</span></div>
+    </aside>
+    <main class="center">
+      <div class="transcript" id="transcript"></div>
+      <div class="composer">
+        <textarea id="goal"></textarea>
+        <button id="send">Run</button>
+      </div>
+    </main>
+    <aside class="context"><div class="ctx-card" id="ctx-card"></div></aside>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
