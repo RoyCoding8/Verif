@@ -77,7 +77,7 @@ function createWindow() {
     height: 800,
     minWidth: 1024,
     minHeight: 640,
-    backgroundColor: '#0f1115', // dark shell chrome; no white flash while loading
+    backgroundColor: '#f6f4ef', // dark shell chrome; no white flash while loading
     autoHideMenuBar: true,
   });
 }
