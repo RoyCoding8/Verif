@@ -8,13 +8,12 @@
 
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDemo, fixtureWorker } from '../examples/setup.mjs';
-import { costCeilingMicros } from '../src/cost-ceiling.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { runTasks } from '../src/verity.mjs';
 
@@ -48,8 +47,23 @@ function threadSummary(thread) {
   return { id, title, taskId, mode, status, createdAt, messages: messages.length };
 }
 
+// Result is { task, status, detail, operation? }: the run's raw promotion
+// record projected onto the wire contract in exactly one place.
+function resultView(result) {
+  const detail = result.status === 'promoted'
+    ? `Promoted as ${result.commit?.slice(0, 8)} · assurance ${JSON.stringify(result.assurance)}`
+    : result.reason ?? result.status;
+  return { task: result.id, status: result.status, detail, operation: result.operation ?? null };
+}
+// The wire contract: exactly the Thread shape, never the internal record
+// (settings and the seed commit stay private to the store).
 function fullThread(thread) {
-  return { ...thread, ...workspaceState(thread) };
+  const { id, title, taskId, mode, status, createdAt, messages } = thread;
+  return {
+    id, title, taskId, mode, status, createdAt, messages,
+    ...workspaceState(thread),
+    ...(thread.results ? { results: thread.results.map(resultView) } : {}),
+  };
 }
 
 // ---------- per-thread workspace ----------
@@ -63,21 +77,31 @@ async function ensureWorkspace(thread) {
   return thread.settings;
 }
 
+// createDemo refuses to run twice in one directory, so the demo template is
+// materialized once per data dir and its settings cached durably for later
+// boots of the same data dir.
 async function taskCatalog() {
-  const root = join(dataDir, 'task-catalog', 'workspace');
+  const catalogDir = join(dataDir, 'task-catalog');
+  const cacheFile = join(catalogDir, 'settings.json');
+  if (existsSync(cacheFile)) return JSON.parse(readFileSync(cacheFile, 'utf8'));
+  rmSync(catalogDir, { recursive: true, force: true });
+  const root = join(catalogDir, 'workspace');
   await mkdir(root, { recursive: true });
-  return createDemo(root);
+  const settings = await createDemo(root);
+  writeFileSync(cacheFile, JSON.stringify(settings));
+  return settings;
 }
 
 function workspaceState(thread) {
   if (!thread.settings) return {};
   const repo = new GitRepo(thread.settings.repository);
   const head = repo.readRef(protectedRef);
-  const run = thread.results ?? [];
   const changed = new Set();
-  for (const result of run) {
-    if (result.commit && result.base) for (const file of repo.changedPaths(result.base, result.commit)) changed.add(file);
-    else if (result.commit) for (const file of repo.changedPaths(thread.seed, result.commit)) changed.add(file);
+  if (thread.seed) {
+    for (const result of thread.results ?? []) {
+      if (result.status !== 'promoted' || !result.commit) continue;
+      for (const file of repo.changedPaths(thread.seed, result.commit)) changed.add(file);
+    }
   }
   return {
     workspace: {
@@ -165,14 +189,7 @@ async function startRun(thread) {
     });
     thread.results = results;
     for (const result of results) {
-      const detail = result.status === 'promoted'
-        ? `Promoted as ${result.commit?.slice(0, 8)} · assurance ${JSON.stringify(result.assurance)}`
-        : result.reason ?? result.status;
-      thread.messages.push({
-        role: 'result',
-        ts: Date.now(),
-        data: { task: result.id, status: result.status, detail, operation: result.operation ?? null },
-      });
+      thread.messages.push({ role: 'result', ts: Date.now(), data: resultView(result) });
     }
     thread.status = results.every(result => result.status === 'promoted') ? 'done' : 'attention';
   } catch (error) {
@@ -183,6 +200,16 @@ async function startRun(thread) {
   emit('thread:update', fullThread(thread));
 }
 
+// Repository paths served from the protected head: plain relative tree paths
+// only — no traversal, no absolute roots, no git metadata.
+function safeRepoPath(file) {
+  if (typeof file !== 'string' || file.length === 0) return false;
+  if (file.startsWith('/') || /^[a-zA-Z]:/.test(file) || file.includes('\\')) return false;
+  if (/[\u0000-\u001f]/.test(file)) return false;
+  const segments = file.split('/');
+  return segments[0] !== '.git'
+    && segments.every(segment => segment !== '' && segment !== '.' && segment !== '..');
+}
 // ---------- http api ----------
 
 function json(response, status, body) {
@@ -251,12 +278,14 @@ async function handle(request, response) {
       messages: [{ role: 'user', text: goal ?? '', ts: Date.now() }],
     };
     threads.set(id, thread);
-    emit('thread:created', threadSummary(thread));
+    // Snapshot the summary at creation time: the run dispatch mutates status.
+    const summary = threadSummary(thread);
+    emit('thread:created', summary);
     persist();
     const settings = await ensureWorkspace(thread);
     thread.seed = new GitRepo(settings.repository).readRef(protectedRef);
     void startRun(thread);
-    return json(response, 201, threadSummary(thread));
+    return json(response, 201, summary);
   }
 
   const threadMatch = path.match(/^\/api\/threads\/([^/]+)$/);
@@ -268,13 +297,19 @@ async function handle(request, response) {
   const fileMatch = path.match(/^\/api\/threads\/([^/]+)\/file$/);
   if (fileMatch && request.method === 'GET') {
     const thread = threads.get(fileMatch[1]);
+    if (!thread) return json(response, 404, { error: 'unknown thread' });
     const file = url.searchParams.get('path');
-    if (!thread?.settings || !file) return json(response, 400, { error: 'path required' });
-    const repo = new GitRepo(thread.settings.repository);
-    const head = repo.readRef(protectedRef);
-    const text = execFileSync('git', ['-C', thread.settings.repository, 'show', `${head}:${file}`],
-      { encoding: 'utf8', windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
-    return json(response, 200, { path: file, content: text });
+    if (!file || !safeRepoPath(file)) return json(response, 400, { error: 'invalid path' });
+    // Files are served only from the protected head of the thread's repo.
+    const head = thread.settings ? new GitRepo(thread.settings.repository).readRef(protectedRef) : null;
+    if (!head) return json(response, 404, { error: 'no protected head' });
+    try {
+      const text = execFileSync('git', ['-C', thread.settings.repository, 'show', `${head}:${file}`],
+        { encoding: 'utf8', windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+      return json(response, 200, { path: file, content: text });
+    } catch {
+      return json(response, 404, { error: 'not found' });
+    }
   }
 
   // static renderer
@@ -288,8 +323,8 @@ async function handle(request, response) {
 }
 
 export function startServer(port = Number(process.env.VERITY_DESKTOP_PORT ?? 47812)) {
-  loadThreads();
   mkdirSync(dataDir, { recursive: true });
+  loadThreads();
   const server = createServer((request, response) => {
     handle(request, response).catch(error => json(response, 500, { error: error.message }));
   });
@@ -298,6 +333,8 @@ export function startServer(port = Number(process.env.VERITY_DESKTOP_PORT ?? 478
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const { url } = startServer();
-  console.log('Verity Desktop backend at ' + url);
+  const { server } = startServer();
+  server.on('listening', () => {
+    console.log('Verity Desktop backend at http://127.0.0.1:' + server.address().port);
+  });
 }
