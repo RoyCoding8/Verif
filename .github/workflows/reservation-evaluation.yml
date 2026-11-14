@@ -54,4 +54,5 @@ jobs:
             openrouter) test -n "$OPENROUTER_API_KEY" || { echo 'Missing OPENROUTER_API_KEY'; exit 1; } ;;
             *) echo 'Select google or openrouter as the evaluation provider'; exit 1 ;;
           esac
+          node evaluation/cost-admission.mjs --check "$TRIAL_PROVIDER" "$TRIAL_MODEL"
           node evaluation/reservation.mjs --live "$TRIAL_PROVIDER" "$TRIAL_MODEL" "$TRIAL_COUNT"

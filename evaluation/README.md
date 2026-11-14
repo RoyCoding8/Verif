@@ -10,6 +10,12 @@ To run the same tasks with a configured Pi provider, run `node evaluation/reserv
 
 Both arms share one durable cost ledger at `tmp/evaluation-cost-journal.sqlite`. Every model request reserves its worst-case catalog price before it is dispatched, and a request that cannot fit the remaining ceiling is refused before it reaches the provider. Provider-reported usage is recorded separately as estimates and never enforces the ceiling. The ledger keeps its ceiling across runs; changing `VERITY_COST_CEILING_USD` against the same journal is refused.
 
+## Live admission check
+
+The provider-side backstop is a capped key: OpenRouter documents worst-case admission for a key with a credit limit, so a request whose worst-case cost exceeds the remaining credit is rejected before it is charged. `node evaluation/cost-admission.mjs --check <provider> <model>` verifies the configuration before any paid run: an approved ceiling in `VERITY_COST_CEILING_USD`, a key with a credit cap at or below that ceiling, and the exact model ID. The workflow runs this check before the matched trials and refuses to start without it. Routes without a documented provider-side credit cap are refused for paid runs.
+
+`node evaluation/cost-admission.mjs --probe <provider> <model>` is the live check that over-budget requests are rejected before charging. It sends exactly one request whose worst-case catalog price exceeds the key's remaining credit and requires a rejection with zero usage delta afterwards. It refuses to send any request the provider might admit, because an admitted request would charge the key; to reach the probeable state, lower the key's credit limit to within one request bound of its current usage.
+
 The output includes each arm's classification counts, per-trial elapsed time through candidate collection and admission, and Pi's reported token counts and estimated model charges when available. `noCandidate` records a run with no changed snapshot to score. Timing excludes setup and shadow evaluation. These fixtures cover the selected model, tasks, tool arms, prompts, and trial count.
 
 The **Evaluate Pi reservation changes** workflow runs the same command on Ubuntu. After the workflow is available on the default branch, select the revision to evaluate and supply the provider, exact model ID, trial count, and the repository variable `VERITY_EVAL_COST_CEILING_USD`. Configure `GEMINI_API_KEY` for Google or `OPENROUTER_API_KEY` for OpenRouter in the repository's Actions secrets. Scripted CI runs without either secret.
