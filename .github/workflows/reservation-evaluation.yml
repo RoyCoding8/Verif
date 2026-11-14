@@ -42,11 +42,13 @@ jobs:
           TRIAL_PROVIDER: ${{ inputs.provider || vars.VERITY_EVAL_PROVIDER }}
           TRIAL_MODEL: ${{ inputs.model || vars.VERITY_EVAL_MODEL }}
           TRIAL_COUNT: ${{ inputs.trials || vars.VERITY_EVAL_TRIALS || '2' }}
+          VERITY_COST_CEILING_USD: ${{ vars.VERITY_EVAL_COST_CEILING_USD }}
           GEMINI_API_KEY: ${{ (inputs.provider || vars.VERITY_EVAL_PROVIDER) == 'google' && secrets.GEMINI_API_KEY || '' }}
           OPENROUTER_API_KEY: ${{ (inputs.provider || vars.VERITY_EVAL_PROVIDER) == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
         shell: bash
         run: |
           set -euo pipefail
+          test -n "$VERITY_COST_CEILING_USD" || { echo 'Missing VERITY_EVAL_COST_CEILING_USD (approved dollar ceiling)'; exit 1; }
           case "$TRIAL_PROVIDER" in
             google) test -n "$GEMINI_API_KEY" || { echo 'Missing GEMINI_API_KEY'; exit 1; } ;;
             openrouter) test -n "$OPENROUTER_API_KEY" || { echo 'Missing OPENROUTER_API_KEY'; exit 1; } ;;

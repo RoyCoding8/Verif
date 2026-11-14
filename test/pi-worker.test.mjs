@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { CostExhausted, requestBoundMicros } from "../src/cost-ceiling.mjs";
 import { runPiWorker } from "../src/pi-worker.mjs";
 
 async function fixture(t) {
@@ -11,7 +12,7 @@ async function fixture(t) {
   return dir;
 }
 
-function fakeSdk({ activeTools, promptError, messages, stats } = {}) {
+function fakeSdk({ activeTools, promptError, promptRun, messages, stats } = {}) {
   const state = { options: undefined, disposed: false, prompt: undefined };
   const sdk = {
     createExtensionRuntime: () => ({}),
@@ -27,7 +28,11 @@ function fakeSdk({ activeTools, promptError, messages, stats } = {}) {
         session: {
           messages,
           getSessionStats: () => stats,
-          async prompt(prompt) { state.prompt = prompt; if (promptError) throw promptError; },
+          async prompt(prompt) {
+            state.prompt = prompt;
+            if (promptRun) await promptRun(options);
+            if (promptError) throw promptError;
+          },
           getLastAssistantText: () => "candidate summary",
           getActiveToolNames: () => activeTools ?? options.tools,
           async dispose() { state.disposed = true; },
@@ -288,6 +293,159 @@ test("the installed Pi SDK accepts the isolated no-model session configuration",
     goal: "No model request is made by this smoke",
     scope: { read: [], write: [], forbidden: [] },
     sdk,
+  });
+  assert.equal(result.status, "candidate");
+});
+
+const catalogModel = {
+  provider: "google", id: "gemini-2.5-flash", maxTokens: 1_000,
+  cost: { input: 0.3, output: 2.5, cacheRead: 0.075, cacheWrite: 0.375 },
+};
+
+test("every model request is priced from the catalog and admitted before dispatch", async t => {
+  const workspace = await fixture(t);
+  const order = [];
+  const admissions = [];
+  const modelRuntime = {
+    stream(requestModel, context) { order.push("stream"); return { requestModel, context }; },
+    streamSimple(requestModel, context) { order.push("streamSimple"); return { requestModel, context }; },
+  };
+  const context = [{ role: "user", content: "hello world" }];
+  const { sdk } = fakeSdk({
+    promptRun: options => {
+      options.modelRuntime.stream(catalogModel, context);
+      options.modelRuntime.streamSimple(catalogModel, context);
+    },
+  });
+  const result = await runPiWorker({
+    workspace, goal: "Inspect the source", scope: { read: [], write: [], forbidden: [] }, sdk,
+    model: catalogModel, modelRuntime,
+    admitRequest: ({ boundMicros, requestBound }) => {
+      order.push("admit");
+      admissions.push({ boundMicros, requestBound });
+    },
+  });
+  assert.equal(result.status, "candidate");
+  assert.deepEqual(order, ["admit", "stream", "admit", "streamSimple"]);
+  const inputBytes = Buffer.byteLength(JSON.stringify(context), "utf8");
+  for (const admission of admissions) {
+    assert.equal(admission.boundMicros, requestBoundMicros(admission.requestBound, inputBytes));
+    assert.equal(admission.boundMicros, Math.ceil(inputBytes * 0.6) + Math.ceil(1_000 * 2.5));
+    assert.deepEqual({ ...admission.requestBound }, {
+      provider: "google", model: "gemini-2.5-flash", inputUsdPerMTok: 0.6, outputUsdPerMTok: 2.5,
+      maxOutputTokens: 1_000, source: "pi-model-catalog",
+    });
+  }
+});
+
+test("an over-budget model request is refused before it reaches the provider", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const modelRuntime = {
+    stream(...args) { dispatched.push(args); },
+    streamSimple(...args) { dispatched.push(args); },
+  };
+  const { sdk } = fakeSdk({ promptRun: options => { options.modelRuntime.stream(catalogModel, []); } });
+  await assert.rejects(runPiWorker({
+    workspace, goal: "Inspect the source", scope: { read: [], write: [], forbidden: [] }, sdk,
+    model: catalogModel, modelRuntime,
+    admitRequest: () => { throw new CostExhausted("Cost ceiling exhausted: request bound exceeds the remaining"); },
+  }), /Cost ceiling exhausted/);
+  assert.deepEqual(dispatched, []);
+});
+
+test("a session that swallows the refusal still fails the attempt with the cost reason", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const modelRuntime = {
+    stream(...args) { dispatched.push(args); },
+    streamSimple(...args) { dispatched.push(args); },
+  };
+  const { sdk } = fakeSdk({
+    promptRun: options => {
+      try { options.modelRuntime.stream(catalogModel, []); } catch { /* the session reports errors as messages */ }
+    },
+  });
+  await assert.rejects(runPiWorker({
+    workspace, goal: "Inspect the source", scope: { read: [], write: [], forbidden: [] }, sdk,
+    model: catalogModel, modelRuntime,
+    admitRequest: () => { throw new CostExhausted("Cost ceiling exhausted: request bound exceeds the remaining"); },
+  }), /Cost ceiling exhausted/);
+  assert.deepEqual(dispatched, []);
+});
+
+test("a pinned request bound fails closed when the catalog exceeds it", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const modelRuntime = {
+    stream(...args) { dispatched.push(args); },
+    streamSimple(...args) { dispatched.push(args); },
+  };
+  const { sdk } = fakeSdk({ promptRun: options => { options.modelRuntime.stream(catalogModel, []); } });
+  await assert.rejects(runPiWorker({
+    workspace, goal: "Inspect the source", scope: { read: [], write: [], forbidden: [] }, sdk,
+    model: catalogModel, modelRuntime,
+    requestBound: {
+      provider: "google", model: "gemini-2.5-flash", inputUsdPerMTok: 0.3, outputUsdPerMTok: 2.5,
+      maxOutputTokens: 1_000, source: "approved plan",
+    },
+    admitRequest: () => {},
+  }), /exceeds the pinned request bound/);
+  assert.deepEqual(dispatched, []);
+});
+
+function fakeBashTool() {
+  return {
+    name: "bash", label: "Bash", description: "Run a shell command in the workspace.",
+    parameters: { type: "object" },
+    async execute() { return { content: [{ type: "text", text: "ran" }], details: {} }; },
+  };
+}
+
+test("the shell arm extends the restricted tool set with one bash tool", async t => {
+  const workspace = await fixture(t);
+  const reservations = [];
+  const { sdk, state } = fakeSdk();
+  sdk.createBashTool = fakeBashTool;
+  const result = await runPiWorker({
+    workspace, goal: "Inspect the source", scope: { read: [], write: [], forbidden: [] }, sdk,
+    shell: true,
+    reserveToolCall: () => reservations.push("reserved"),
+  });
+  assert.equal(result.status, "candidate");
+  assert.deepEqual(state.options.tools, ["read", "write", "edit", "search", "bash"]);
+  const bash = state.options.customTools.find(tool => tool.name === "bash");
+  await bash.execute("call-1", {});
+  assert.deepEqual(reservations, ["reserved"]);
+});
+
+test("the shell arm fails closed when the SDK cannot supply a bash tool", async t => {
+  const workspace = await fixture(t);
+  const { sdk } = fakeSdk();
+  await assert.rejects(runPiWorker({
+    workspace, goal: "Inspect the source", scope: { read: [], write: [], forbidden: [] }, sdk, shell: true,
+  }), /createBashTool/);
+});
+
+test("the real SDK accepts a shell-arm session in the isolated workspace", async t => {
+  const workspace = await fixture(t);
+  const codingAgent = await import("@earendil-works/pi-coding-agent");
+  const { Type } = await import("typebox");
+  const sdk = {
+    ...codingAgent,
+    Type,
+    async createAgentSession(options) {
+      const created = await codingAgent.createAgentSession(options);
+      created.session.prompt = async () => {};
+      return created;
+    },
+  };
+  const result = await runPiWorker({
+    workspace,
+    goal: "No model request is made by this smoke",
+    scope: { read: [], write: [], forbidden: [] },
+    sdk,
+    shell: true,
   });
   assert.equal(result.status, "candidate");
 });
