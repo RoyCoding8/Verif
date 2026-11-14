@@ -3,6 +3,7 @@ import { realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { approvedTask, digest, requireThat, within } from './contracts.mjs';
+import { costCeilingMicros, CostExhausted } from './cost-ceiling.mjs';
 import { GitRepo, promotionCommitMessage } from './git.mjs';
 import { Journal } from './journal.mjs';
 import { selectModelRoute } from './model-route.mjs';
@@ -227,6 +228,7 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
   const feedbackChecks = contract.policy.feedbackChecks ?? [];
   const policy = digest(contract.policy);
   const lessons = contract.policy.lessons ?? [];
+  const { costLimit } = context;
   for (const { attempt, evidence } of lessons) {
     requireThat(journal.hasVerifierRefusal(attempt, evidence), 'Approved lesson lacks a recorded verifier refusal');
   }
@@ -255,6 +257,10 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
           workspace, goal: contract.goal + guidance + diagnosis, scope: contract.scope, signal,
           ...(route ? { route } : {}),
           recordUsage: usage => journal.recordModelUsage(attempt, usage),
+          ...(costLimit ? { admitRequest: ({ boundMicros, requestBound }) => {
+            requireAttemptAuthority(journal, attempt, task.approval, policy, 'model requests');
+            journal.reserveCost(attempt, boundMicros, requestBound);
+          } } : {}),
           reserveToolCall: () => {
             requireAttemptAuthority(journal, attempt, task.approval, policy, 'tool calls');
             if (contract.policy.maxToolCalls !== undefined) journal.reserveUsage(attempt, 'tool calls', 1, contract.policy.maxToolCalls);
@@ -290,7 +296,8 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
       return await integrate(context, task, claim, attempt, base, candidate, deadline, signal, prerequisites);
     } catch (error) {
       recoveryPending = error instanceof RecoveryRequired;
-      if (round === repairs || signal.aborted || recoveryPending || !journal.authority(attempt)?.active) throw error;
+      if (round === repairs || signal.aborted || recoveryPending || error instanceof CostExhausted ||
+        !journal.authority(attempt)?.active) throw error;
       diagnosis = '\nPrevious attempt was refused. Use the task goal and any approved feedback checks to revise your approach.';
     } finally {
       if (!recoveryPending) journal.invalidate(attempt);
@@ -300,11 +307,13 @@ async function runTask(context, task, { claim, startedMs }, prerequisites) {
 }
 
 export async function runTasks({
-  repository, journalPath, oracleRoot, scratch, tasks: inputs, maxWorkers = 2, orthogonalOnly = false, worker = runPiWorker, signal, onEvent,
+  repository, journalPath, oracleRoot, scratch, tasks: inputs, maxWorkers = 2, orthogonalOnly = false, worker = runPiWorker, signal, onEvent, costCeilingUsd,
 }) {
   requireThat(Array.isArray(inputs) && inputs.length > 0, 'No tasks supplied');
   requireThat(Number.isSafeInteger(maxWorkers) && maxWorkers > 0 && maxWorkers <= 32, 'Invalid worker limit');
   requireThat(typeof orthogonalOnly === 'boolean', 'Invalid orthogonal scheduling setting');
+  const costLimit = costCeilingUsd !== undefined;
+  const ceilingMicros = costLimit ? costCeilingMicros(costCeilingUsd) : null;
   const tasks = inputs.map(approvedTask);
   validateGraph(tasks);
   repository = realpathSync(resolve(repository));
@@ -315,12 +324,13 @@ export async function runTasks({
   const database = resolve(journalPath);
   await mkdir(dirname(database), { recursive: true });
   const journal = new Journal(database);
-  const context = { repo, repository, runId, journal, oracleRoot: resolve(oracleRoot), scratch, worker, signal, onEvent };
+  const context = { repo, repository, runId, journal, oracleRoot: resolve(oracleRoot), scratch, worker, signal, onEvent, costLimit };
   const byId = new Map(tasks.map(task => [task.contract.id, task]));
   const pending = new Map();
   const running = new Map();
   const completed = new Map();
   try {
+    if (ceilingMicros !== null) journal.setCostCeiling(ceilingMicros);
     for (const ref of new Set(tasks.map(task => task.contract.policy.ref))) {
       const operation = journal.getPending(ref);
       requireThat(!operation, 'Recover prepared operation ' + operation?.id + ' before running tasks for ' + ref);

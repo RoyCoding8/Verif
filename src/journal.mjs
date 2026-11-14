@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { admitRequest, CostExhausted } from './cost-ceiling.mjs';
 import { digest } from './contracts.mjs';
 
 const fields = ['id', 'attempt', 'contract', 'policy', 'ref', 'old', 'next'];
@@ -161,6 +162,18 @@ export class Journal {
         result_set INTEGER NOT NULL CHECK (result_set IN (0, 1)),
         PRIMARY KEY (run_id, task_id),
         CHECK ((result_set = 0 AND result IS NULL) OR (result_set = 1 AND result IS NOT NULL))
+      );
+      CREATE TABLE IF NOT EXISTS cost_ceiling (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        ceiling_micros INTEGER NOT NULL CHECK (ceiling_micros > 0),
+        reserved_micros INTEGER NOT NULL CHECK (reserved_micros >= 0)
+      );
+      CREATE TABLE IF NOT EXISTS cost_admissions (
+        rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+        attempt TEXT NOT NULL REFERENCES attempts(id),
+        bound_micros INTEGER NOT NULL CHECK (bound_micros > 0),
+        reserved_micros INTEGER NOT NULL CHECK (reserved_micros > 0),
+        request_bound TEXT NOT NULL
       );
     `);
     const attemptColumns = new Set(this.#db.prepare('PRAGMA table_info(attempts)').all().map(column => column.name));
@@ -329,6 +342,55 @@ export class Journal {
         ON CONFLICT (run_id, task_id, kind) DO UPDATE SET spent = excluded.spent
       `).run(attempt.run_id, attempt.task_id, kind, spent + amount);
     });
+  }
+
+  // The hard cross-run cost limit: one approved ceiling per journal, summed
+  // across runs and restarts, reserved against worst-case pre-request bounds.
+  setCostCeiling(ceilingMicros) {
+    if (!Number.isSafeInteger(ceilingMicros) || ceilingMicros < 1) throw new TypeError('Invalid cost ceiling');
+    this.#transaction(() => {
+      this.#db.prepare('INSERT OR IGNORE INTO cost_ceiling (id, ceiling_micros, reserved_micros) VALUES (1, ?, 0)')
+        .run(ceilingMicros);
+      const row = this.#db.prepare('SELECT ceiling_micros FROM cost_ceiling WHERE id = 1').get();
+      if (row.ceiling_micros !== ceilingMicros) throw new CostExhausted('Cross-run cost ceiling cannot change');
+    });
+  }
+
+  costCeiling() {
+    const row = this.#db.prepare('SELECT ceiling_micros, reserved_micros FROM cost_ceiling WHERE id = 1').get();
+    return row && { ceilingMicros: row.ceiling_micros, reservedMicros: row.reserved_micros };
+  }
+
+  reserveCost(attempt, boundMicros, requestBound) {
+    attempt = requireString(attempt, 'attempt');
+    if (!Number.isSafeInteger(boundMicros) || boundMicros < 1) throw new TypeError('Invalid cost reservation');
+    if (!requestBound || typeof requestBound !== 'object' || Array.isArray(requestBound)) {
+      throw new TypeError('Invalid request bound record');
+    }
+    this.#transaction(() => {
+      if (!this.authority(attempt)?.active) throw new Error('Attempt cannot reserve resources');
+      const ceiling = this.#db.prepare('SELECT ceiling_micros, reserved_micros FROM cost_ceiling WHERE id = 1').get();
+      if (!ceiling) throw new CostExhausted('No approved cross-run cost ceiling');
+      const decision = admitRequest({
+        ceilingMicros: ceiling.ceiling_micros, reservedMicros: ceiling.reserved_micros, boundMicros,
+      });
+      if (!decision.admitted) throw new CostExhausted(decision.reason);
+      this.#db.prepare('UPDATE cost_ceiling SET reserved_micros = ? WHERE id = 1')
+        .run(ceiling.reserved_micros + boundMicros);
+      this.#db.prepare(`
+        INSERT INTO cost_admissions (attempt, bound_micros, reserved_micros, request_bound) VALUES (?, ?, ?, ?)
+      `).run(attempt, boundMicros, ceiling.reserved_micros + boundMicros, canonicalJson(requestBound));
+    });
+  }
+
+  costAdmissions(attempt) {
+    return this.#db.prepare(`
+      SELECT attempt, bound_micros AS boundMicros, reserved_micros AS reservedMicros, request_bound AS requestBound
+      FROM cost_admissions WHERE attempt = ? ORDER BY rowid
+    `).all(requireString(attempt, 'attempt')).map(row => ({
+      attempt: row.attempt, boundMicros: row.boundMicros, reservedMicros: row.reservedMicros,
+      requestBound: JSON.parse(row.requestBound),
+    }));
   }
 
   recordVerifierRefusal(attempt, result) {

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { normalizeRequestBound } from './cost-ceiling.mjs';
 import { normalizeModelRoute } from './model-route.mjs';
 
 const levels = new Map([['tested', 0], ['bounded', 1], ['formal', 2]]);
@@ -282,6 +283,15 @@ export function makeContract(input, plan) {
   const modelRoute = normalizeModelRoute(policy.modelRoute);
   requireThat(!Object.hasOwn(policy, 'delegation') || policy.delegation === 'monotonic', 'Unsupported delegation policy');
   requireThat(!Object.hasOwn(policy, 'reuseEvidence') || typeof policy.reuseEvidence === 'boolean', 'Invalid evidence reuse policy');
+  if (Object.hasOwn(policy, 'cost')) {
+    const { cost } = policy;
+    requireThat(cost && typeof cost === 'object' && !Array.isArray(cost) &&
+      Object.keys(cost).length === 1 && Object.hasOwn(cost, 'requestBound'), 'Invalid cost policy');
+    const bound = normalizeRequestBound(cost.requestBound);
+    requireThat(modelRoute === undefined ||
+      modelRoute.some(entry => entry.provider === bound.provider && entry.model === bound.model),
+    'Pinned request bound does not match the approved model route');
+  }
   if (Object.hasOwn(policy, 'feedbackChecks')) {
     const { feedbackChecks } = policy;
     const obligationIds = new Set(plan.obligations.map(({ id }) => id));
