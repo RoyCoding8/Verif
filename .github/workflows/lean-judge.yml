@@ -38,6 +38,8 @@ jobs:
           bwrap --ro-bind / / --unshare-user --unshare-net --die-with-parent /usr/bin/true
           lake --version
       - run: npm ci --no-audit --no-fund
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Check judge boundary and real comparator fixtures
         run: node --test test/lean-judge.test.mjs
         env:
