@@ -33,6 +33,19 @@ async function captureHistory(factory, args, phases) {
   return history;
 }
 
+function observedOutput(output, label) {
+  try {
+    return { actual: jsonOutput(output, label) };
+  } catch {
+    const kind = typeof output === 'function' ? 'function'
+      : typeof output === 'bigint' ? 'bigint'
+      : typeof output === 'symbol' ? 'symbol'
+      : typeof output === 'number' ? (Number.isNaN(output) ? 'nan' : 'infinity')
+      : typeof output === 'undefined' ? 'undefined' : 'composite';
+    return { invalidOutput: kind };
+  }
+}
+
 const [workspace, request, mode] = process.argv.slice(2);
 const strictJson = mode === '--strict-json';
 const cases = JSON.parse(await readFile(request, 'utf8'));
@@ -41,6 +54,9 @@ for (const { id, module, name, args, calls } of cases) {
   const exports = await import(pathToFileURL(join(workspace, module)));
   if (typeof exports[name] !== 'function') throw new Error('Required export is missing: ' + name);
   const output = calls ? await captureHistory(exports[name], args, calls) : await exports[name](...args);
-  observations.push({ id, actual: strictJson && !calls ? jsonOutput(output, name) : output });
+  // Invalid outputs are reported outside `actual` so no user value can equal them.
+  observations.push(calls || strictJson
+    ? { id, actual: calls ? output : jsonOutput(output, name) }
+    : { id, ...observedOutput(output, name) });
 }
 process.stdout.write(JSON.stringify(observations));

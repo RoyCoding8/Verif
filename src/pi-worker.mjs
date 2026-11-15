@@ -74,18 +74,20 @@ function textResult(text, details = {}, isError = false) {
   return { content: [{ type: "text", text }], details, ...(isError ? { isError: true } : {}) };
 }
 
-const ADMISSION_METHODS = ["stream", "streamSimple", "generateImages", "classify"];
+// Request entries of the pinned @earendil-works/pi-coding-agent 1.5.2 ModelRuntime
+// (dist/core/model-runtime.d.ts). Deferred entries take a DeferredHandle whose
+// billed usage they cannot see, so they are refused rather than priced.
+const CONTEXT_ENTRY_METHODS = ["stream", "complete", "streamSimple", "completeSimple", "generateImages", "classify"];
+const DEFERRED_ENTRY_METHODS = ["streamDeferred", "fetchDeferred"];
 
-// Non-mutating view of a model runtime that prices every provider request
-// from the pinned catalog entry and admits it against the hard cost ledger
-// before it is issued. Refusals leave the request unsent.
-function admissionRuntime(runtime, admit) {
+function admissionRuntime(runtime, admit, refuse) {
   return new Proxy(runtime, {
     get(target, property) {
       const value = Reflect.get(target, property, target);
       if (typeof value !== "function") return value;
       const bound = value.bind(target);
-      if (!ADMISSION_METHODS.includes(property)) return bound;
+      if (DEFERRED_ENTRY_METHODS.includes(property)) return () => refuse(property);
+      if (!CONTEXT_ENTRY_METHODS.includes(property)) return bound;
       return (...args) => {
         const [requestModel, context] = args;
         admit(requestModel, context);
@@ -243,7 +245,7 @@ export async function runPiWorker({ workspace, goal, scope, signal, runCheck, sd
         try {
           const current = await openRead(args.path);
           const first = current.indexOf(args.oldText);
-          if (first < 0 || current.indexOf(args.oldText, first + args.oldText.length) >= 0) throw new Error("Edit text must match exactly one occurrence");
+          if (first < 0 || current.indexOf(args.oldText, first + 1) >= 0) throw new Error("Edit text must match exactly one occurrence");
           await writeFile(args.path, current.slice(0, first) + args.newText + current.slice(first + args.oldText.length));
           return textResult(`Edited ${args.path}`);
         } catch (error) { return textResult(error.message, {}, true); }
@@ -362,6 +364,10 @@ export async function runPiWorker({ workspace, goal, scope, signal, runCheck, sd
         admissionRefusal = error;
         throw error;
       }
+    }, property => {
+      const error = new Error(`Deferred model request cannot be priced before dispatch: ${property}`);
+      admissionRefusal = error;
+      throw error;
     });
   }
   const created = await pi.createAgentSession({
