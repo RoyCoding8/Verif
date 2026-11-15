@@ -265,6 +265,8 @@ function historyVerdict(machine, scenario, observed, deadline) {
   return { status: linearizable === expected ? 'PASS' : 'FAIL', overlapping: expected && overlapping };
 }
 
+const INVALID_OUTPUT_KINDS = new Set(['undefined', 'nan', 'infinity', 'function', 'bigint', 'symbol', 'composite']);
+
 function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prepared, deadline }) {
   let level;
   let output;
@@ -287,7 +289,13 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
     const history = obligation.method === 'node-history';
     let overlap = false;
     const observed = raw.observations.map((item, index) => {
-      requireThat(item && item.id === cases[index].id && Object.hasOwn(item, 'actual') && item.actual !== undefined,
+      requireThat(item && item.id === cases[index].id, 'Invalid observation for ' + obligation.id);
+      if (Object.hasOwn(item, 'invalidOutput')) {
+        requireThat(!history && Object.keys(item).sort().join(',') === 'id,invalidOutput' &&
+          INVALID_OUTPUT_KINDS.has(item.invalidOutput), 'Invalid observation for ' + obligation.id);
+        return { id: item.id, status: 'FAIL' };
+      }
+      requireThat(Object.keys(item).sort().join(',') === 'actual,id' && item.actual !== undefined,
         'Invalid observation for ' + obligation.id);
       if (!history) return { id: item.id, status: digest(item.actual) === digest(cases[index].expected) ? 'PASS' : 'FAIL' };
       const verdict = historyVerdict(prepared.machine, cases[index], item.actual, deadline);

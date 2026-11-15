@@ -15,6 +15,10 @@ const PROBE = [
   'export function nully() { return null; }',
   'export function value() { return 42; }',
   'export function markerLike() { return { unrepresentable: "undefined" }; }',
+  'export function inf() { return Infinity; }',
+  'export function callable() { return () => 1; }',
+  'export function big() { return 1n; }',
+  'export function circ() { const value = {}; value.self = value; return value; }',
   '',
 ].join('\n');
 
@@ -37,6 +41,12 @@ async function observationFixture(t) {
     marker: await oracle('marker.json', [{ id: 'c6', module: 'probe.mjs', name: 'markerLike', args: [],
       expected: { unrepresentable: 'undefined' } }]),
     value: await oracle('value.json', [{ id: 'c2', module: 'probe.mjs', name: 'value', args: [], expected: 42 }]),
+    collision: await oracle('collision.json', [{ id: 'c7', module: 'probe.mjs', name: 'nothing', args: [],
+      expected: { unrepresentable: 'undefined' } }]),
+    infNull: await oracle('inf-null.json', [{ id: 'c8', module: 'probe.mjs', name: 'inf', args: [], expected: null }]),
+    fnNull: await oracle('fn-null.json', [{ id: 'c9', module: 'probe.mjs', name: 'callable', args: [], expected: null }]),
+    bigNull: await oracle('big-null.json', [{ id: 'c10', module: 'probe.mjs', name: 'big', args: [], expected: null }]),
+    circValue: await oracle('circ-value.json', [{ id: 'c11', module: 'probe.mjs', name: 'circ', args: [], expected: 42 }]),
   };
   const repo = new GitRepo(settings.repository);
   const seeded = repo.readRef('refs/heads/protected');
@@ -59,7 +69,7 @@ function probeTask({ base, oracles }, obligations) {
     claims: [{ id: 'probe', statement: 'Probe outputs compare exactly or fail closed.', required: 'tested' }],
     criteria: [{ id: 'probe', description: 'All probe legs hold.', claims: ['probe'] }],
     scope: { read: ['probe.mjs'], write: ['probe.mjs'], forbidden: [] },
-    policy: { ref: 'refs/heads/protected', budgetMs: 45_000, reuseEvidence: true },
+    policy: { ref: 'refs/heads/protected', budgetMs: 180_000, reuseEvidence: true },
     obligations: obligations.map(({ id, oracle: oracleKey, cases, subject, expect, witness }) => ({
       id, claim: 'probe', subject, expect, ...(witness ? { witness } : {}), method: 'node-test',
       oracle: oracles[oracleKey], cases, timeoutMs: 5_000, outputs: [],
@@ -79,6 +89,11 @@ const FAIL_LEGS = [
   { id: 'null-pass', oracle: 'nullNull', cases: ['c4'], subject: 'candidate', expect: 'PASS' },
   { id: 'marker-exact', oracle: 'marker', cases: ['c6'], subject: 'candidate', expect: 'PASS' },
   { id: 'valid-pass', oracle: 'value', cases: ['c2'], subject: 'candidate', expect: 'PASS' },
+  { id: 'undef-vs-marker', oracle: 'collision', cases: ['c7'], subject: 'candidate', expect: 'FAIL', witness: 'c7' },
+  { id: 'inf-vs-null', oracle: 'infNull', cases: ['c8'], subject: 'candidate', expect: 'FAIL', witness: 'c8' },
+  { id: 'fn-vs-null', oracle: 'fnNull', cases: ['c9'], subject: 'candidate', expect: 'FAIL', witness: 'c9' },
+  { id: 'big-vs-null', oracle: 'bigNull', cases: ['c10'], subject: 'candidate', expect: 'FAIL', witness: 'c10' },
+  { id: 'circ-vs-value', oracle: 'circValue', cases: ['c11'], subject: 'candidate', expect: 'FAIL', witness: 'c11' },
 ];
 
 const EXPECTED_VERDICTS = Object.fromEntries(FAIL_LEGS.map(leg => [leg.id, leg.expect === 'FAIL'
@@ -129,6 +144,11 @@ test('structurally broken cached observations are rejected and re-executed', asy
     { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '', observations: [{ id: 'c1', actual: undefined }] },
     { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '', observations: [{ id: 'other', actual: 42 }] },
     { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '', observations: [] },
+    { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '', observations: [{ id: 'c1', actual: 42, invalidOutput: 'undefined' }] },
+    { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '', observations: [{ id: 'c1', invalidOutput: 'bogus' }] },
+    { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '', observations: [{ id: 'c1', invalidOutput: 42 }] },
+    { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '', observations: [{ id: 'other', invalidOutput: 'undefined' }] },
+    { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '', observations: [{ id: 'c1', actual: 42, extra: 1 }] },
     { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '', observations: [{ id: 'c1', actual: { unrepresentable: 'undefined' } }] },
   ];
   let offered = 0;
@@ -147,4 +167,32 @@ test('structurally broken cached observations are rejected and re-executed', asy
     assert.equal(result.status, expected.status, result.id);
     if ('witness' in expected) assert.equal(result.witness, expected.witness, result.id);
   }
+});
+
+test('a well-formed cached invalid-output event is accepted and fails its case', async t => {
+  const fixture = await observationFixture(t);
+  t.after(fixture.cleanup);
+  const journal = new Journal(join(await mkdtemp(join(tmpdir(), 'verity-observation-j-')), 'journal.sqlite'));
+  t.after(() => journal.close());
+  const legs = [
+    { id: 'cached-invalid', oracle: 'value', cases: ['c2'], subject: 'candidate', expect: 'FAIL', witness: 'c2' },
+    { id: 'valid-pass', oracle: 'value', cases: ['c2'], subject: 'candidate', expect: 'PASS' },
+  ];
+  const task = probeTask(fixture, legs);
+  journal.registerRun('run-cached-invalid', [{ id: task.contract.id, approval: task.approval }]);
+  const current = journal.startTask('run-cached-invalid', task.contract.id);
+  const attempt = 'attempt-cached-invalid';
+  journal.registerAttempt({ id: attempt, contract: task.approval, policy: digest(task.contract.policy), runId: 'run-cached-invalid',
+    taskId: task.contract.id, claim: current.claim });
+  const cached = { version: 1, method: 'node-test', exit: 0, stdout: '', stderr: '',
+    observations: [{ id: 'c2', invalidOutput: 'undefined' }] };
+  let offered = 0;
+  const observedJournal = {
+    authority: journal.authority.bind(journal),
+    rememberEvidence: journal.rememberEvidence.bind(journal),
+    reusableEvidence: () => offered++ === 0 ? cached : null,
+  };
+  const receipt = await verifyPlan(fixture, task, observedJournal, attempt);
+  assert.deepEqual(receipt.results.map(result => [result.id, result.status, result.witness ?? null]),
+    [['cached-invalid', 'FAIL', 'c2'], ['valid-pass', 'PASS', null]]);
 });

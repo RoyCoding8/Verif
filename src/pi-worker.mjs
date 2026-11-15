@@ -74,20 +74,12 @@ function textResult(text, details = {}, isError = false) {
   return { content: [{ type: "text", text }], details, ...(isError ? { isError: true } : {}) };
 }
 
-// Request-entry methods of the pinned @earendil-works/pi-coding-agent 1.5.2
-// ModelRuntime (dist/core/model-runtime.d.ts). Context entries take
-// (model, context, options) and are priced from the pinned catalog entry and
-// admitted against the hard cost ledger before they are issued. Deferred
-// entries (streamDeferred, fetchDeferred) take a DeferredHandle instead of a
-// Context: their billed usage is decided by the original deferred submission,
-// which such a call cannot see, so they are refused before dispatch rather
-// than priced from the handle. cancelDeferred and the auth/getter surface are
-// non-request utilities and stay unwrapped.
+// Request entries of the pinned @earendil-works/pi-coding-agent 1.5.2 ModelRuntime
+// (dist/core/model-runtime.d.ts). Deferred entries take a DeferredHandle whose
+// billed usage they cannot see, so they are refused rather than priced.
 const CONTEXT_ENTRY_METHODS = ["stream", "complete", "streamSimple", "completeSimple", "generateImages", "classify"];
 const DEFERRED_ENTRY_METHODS = ["streamDeferred", "fetchDeferred"];
 
-// Non-mutating view of a model runtime that admits or refuses every provider
-// request entry before it is issued. Refusals leave the request unsent.
 function admissionRuntime(runtime, admit, refuse) {
   return new Proxy(runtime, {
     get(target, property) {

@@ -25,8 +25,7 @@ async function seedFile(workspace, relative, content) {
   await writeFile(path.join(workspace, relative), content);
 }
 
-// Every request-entry method of the pinned @earendil-works/pi-coding-agent
-// 1.5.2 ModelRuntime (dist/core/model-runtime.d.ts), plus non-request utilities.
+// Request entries of the pinned 1.5.2 ModelRuntime declaration, plus non-request utilities.
 function fullRequestRuntime(dispatched) {
   return {
     stream(...args) { dispatched.push("stream"); },
