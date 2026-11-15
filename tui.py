@@ -4,36 +4,28 @@
 Stdlib only so the bash and batch wrappers drive the same entry point.
 """
 
-import glob
 import os
 import shutil
 import subprocess
 import sys
 
+# This launcher's repository. Commands run here, not in the caller's cwd.
+ROOT = os.path.dirname(os.path.abspath(__file__))
+
 # label -> argv. The app comes first because that is what this is for.
 COMMANDS = (
     ('Run the app', ['npm', 'run', 'app']),
-    ('Run the test suite', ['node', '--test', 'test/*.test.mjs']),
+    ('Run the test suite', ['npm', 'test']),
     ('Demo fixture', ['npm', 'run', 'demo']),
     ('Desktop smoke (real window)', ['npm', 'run', 'smoke']),
 )
-
-
-def expand(argv):
-    out = []
-    for arg in argv:
-        if any(ch in arg for ch in '*?[') and glob.glob(arg):
-            out.extend(sorted(glob.glob(arg)))
-        else:
-            out.append(arg)
-    return out
 
 
 def spawn(argv):
     resolved = shutil.which(argv[0])
     if resolved is None:
         return 127
-    return subprocess.run([resolved] + expand(argv[1:])).returncode
+    return subprocess.run([resolved] + argv[1:], cwd=ROOT).returncode
 
 
 def read_key():
