@@ -128,7 +128,6 @@ async function bootedRenderer() {
   const renderer = makeRenderer();
   const source = await readFile(new URL('./public/app.js', import.meta.url), 'utf8');
   vm.runInContext(source, renderer.context, { filename: 'app.js' });
-  renderer.run('boot()');
   await until(() => rendererText(renderer, 'host') !== '', 5000, 'boot to render the host');
   return renderer;
 }
