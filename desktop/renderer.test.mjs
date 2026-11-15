@@ -132,6 +132,61 @@ async function bootedRenderer() {
   return renderer;
 }
 
+test('appearance choices persist and resolve through settings controls', async () => {
+  const renderer = await bootedRenderer();
+  renderer.registry.get('theme-dark').click();
+  assert.equal(renderer.run('document.documentElement.dataset.theme'), 'dark', 'dark choice applies the dark theme');
+  assert.equal(renderer.run('localStorage.getItem("verity-theme")'), 'dark', 'dark choice is persisted');
+  renderer.registry.get('theme-light').click();
+  assert.equal(renderer.run('document.documentElement.dataset.theme'), 'light', 'light choice applies the light theme');
+  assert.equal(renderer.run('localStorage.getItem("verity-theme")'), 'light', 'light choice is persisted');
+  renderer.registry.get('theme-system').click();
+  assert.equal(renderer.run('localStorage.getItem("verity-theme")'), 'system', 'system choice is persisted');
+  assert.ok(['light', 'dark'].includes(renderer.run('document.documentElement.dataset.theme')), 'system resolves to a concrete theme');
+});
+
+test('Pi mode shows the unavailable reason in one line and fixture mode shows nothing', async () => {
+  const renderer = await bootedRenderer();
+  const mode = renderer.registry.get('mode');
+  const note = renderer.registry.get('mode-note');
+  mode.value = 'pi';
+  await renderer.run('renderModeNote()');
+  assert.equal(note.hidden, false, 'the unavailable reason is visible');
+  assert.ok(note.textContent.length > 0, 'the reason names the missing route');
+  mode.value = 'fixture';
+  await renderer.run('renderModeNote()');
+  assert.equal(note.hidden, true, 'fixture mode carries no note');
+});
+
+test('top readiness describes the selected mode: Demo ready by default, Pi verdict only when Pi is selected', async () => {
+  const renderer = await bootedRenderer();
+  const mode = renderer.registry.get('mode');
+  mode.value = 'fixture';
+  await renderer.run('renderComposer()');
+  assert.equal(rendererText(renderer, 'route-label'), 'Demo ready',
+    'the fixture demo reads ready, never Pi unavailable');
+  mode.value = 'pi';
+  await renderer.run('renderComposer()');
+  assert.equal(rendererText(renderer, 'route-label'), 'Pi unavailable',
+    'selecting Pi surfaces the Pi verdict');
+  assert.equal(rendererText(renderer, 'mode-note').length > 0, true,
+    'the concise Pi reason appears only while Pi is selected');
+  mode.value = 'fixture';
+  await renderer.run('renderComposer()');
+  assert.equal(rendererText(renderer, 'route-label'), 'Demo ready',
+    'returning to Demo clears the Pi verdict');
+  assert.equal(rendererText(renderer, 'mode-note'), '', 'the Pi reason hides with Demo');
+});
+
+test('closing the file viewer clears the open path without navigating away', async () => {
+  const renderer = await bootedRenderer();
+  await renderer.run('openThread("missing-thread-xyz")');
+  await renderer.run('state.files.path = "reserve.mjs"');
+  renderer.registry.get('file-close').click();
+  assert.equal(renderer.run('state.files.path'), null, 'the open path is cleared');
+  assert.equal(renderer.registry.get('file-view').hidden, true, 'the viewer hides');
+});
+
 test('an unknown thread id stays out of thread state and its 404 error body is shown', async () => {
   const renderer = await bootedRenderer();
   await renderer.run('(async () => { await openThread("missing-thread-xyz"); })()');
@@ -186,3 +241,65 @@ test('a valid run opens the thread with messages and results, and files report e
   await renderer.run(`(async () => { openFile("no-such-file.mjs"); })()`);
   await until(() => rendererText(renderer, 'file-content').includes('not found'), 5000, 'file 404 message');
 });
+test('a promoted result shows a human-readable card with the exact receipt under a collapsed disclosure', async () => {
+  const renderer = await bootedRenderer();
+  const before = renderer.run('state.summaries.length');
+  renderer.registry.get('goal').value = 'Reserve the demo room for the walkthrough';
+  renderer.registry.get('send').click();
+  await until(() => renderer.run('state.summaries.length') === before + 1, 30000, 'thread creation');
+  const id = renderer.run('state.summaries[0].id');
+  await until(async () => (await (await realFetch(`${base}/api/threads/${id}`)).json()).status === 'done',
+    90000, 'fixture run to finish');
+  await renderer.run(`(async () => { await openThread(${JSON.stringify(id)}); })()`);
+  const stored = renderer.run(`state.threads.get(${JSON.stringify(id)})`);
+  const result = stored.results[0];
+  const transcript = renderer.registry.get('transcript');
+  const card = transcript.children.find(child => child.children.some(node => node.tag === 'details'));
+  assert.ok(card, 'a result card with a disclosure is rendered');
+  const detail = card.children.find(node => node.className === 'detail');
+  assert.ok(detail, 'the visible detail line exists');
+  const visible = textOf(detail);
+  assert.equal(visible, `Promoted as ${result.commit.slice(0, 8)}`,
+    'the visible card shows task verdict and short commit only');
+  assert.ok(!visible.includes('{') && !visible.includes('assurance'),
+    'no raw JSON is initially visible in the card');
+  const disclosure = card.children.find(node => node.tag === 'details');
+  assert.ok(!disclosure.open, 'the exact receipt starts collapsed');
+  const exact = textOf(disclosure);
+  assert.ok(exact.includes(result.operation), 'disclosure reveals the full operation id');
+  assert.ok(exact.includes(result.commit), 'disclosure reveals the full commit');
+  assert.ok(exact.includes(JSON.stringify(result.assurance)), 'disclosure reveals the exact assurance');
+});
+
+test('a refused result keeps its full reason visible and exact under the disclosure', async () => {
+  const renderer = await bootedRenderer();
+  const card = renderer.run(`renderMessage({ role: 'result', data: {
+    task: 'reserve', status: 'refused', detail: 'Candidate has no changes or changed paths outside approved scope',
+    operation: 'op-exact-123', commit: null, assurance: null } })`);
+  const detail = card.children.find(node => node.className === 'detail');
+  assert.ok(textOf(detail).includes('Candidate has no changes'),
+    'the refusal reason stays fully visible');
+  const disclosure = card.children.find(node => node.tag === 'details');
+  assert.ok(!disclosure.open, 'the disclosure starts collapsed');
+  const exact = textOf(disclosure);
+  assert.ok(exact.includes('op-exact-123'), 'disclosure carries the operation id');
+  assert.ok(exact.includes('Candidate has no changes'), 'disclosure carries the exact result text');
+});
+
+test('opening a file swaps the inspector rail to the file view, and Back returns to details', async () => {
+  const renderer = await bootedRenderer();
+  const before = renderer.run('state.summaries.length');
+  renderer.registry.get('goal').value = 'Reserve the demo room for the walkthrough';
+  renderer.registry.get('send').click();
+  await until(() => renderer.run('state.summaries.length') === before + 1, 30000, 'thread creation');
+  const id = renderer.run('state.summaries[0].id');
+  await renderer.run(`(async () => { await openThread(${JSON.stringify(id)}); })()`);
+  await renderer.run('openFile("reserve.mjs")');
+  assert.equal(renderer.registry.get('file-view').hidden, false, 'the file view is the rail content');
+  assert.equal(renderer.registry.get('ctx-details').hidden, true, 'details hide while a file is open');
+  assert.ok(renderer.run('document.getElementById("app").classList'), 'app class hook exists');
+  await renderer.run('openFile(null)');
+  assert.equal(renderer.registry.get('ctx-details').hidden, false, 'details return when the file closes');
+  assert.equal(renderer.registry.get('file-view').hidden, true, 'the file view hides on close');
+});
+

@@ -5,7 +5,8 @@
 //   summary { id, title, taskId, mode, status, createdAt, messages: number }
 //   thread  summary + messages: Message[], results?: Result[], workspace?: Workspace
 //   message { role: user|system|agent|result|error, text?, data?: Result, ts }
-//   result  { task, status: promoted|refused|blocked, detail, operation? }
+//   result  { task, status: promoted|refused|blocked, detail, operation?,
+//             commit?, assurance? }
 //   task    { id, goal, dependencies }
 //   workspace { host, ref, head, files, changed: string[] }
 
@@ -35,11 +36,12 @@ const state = {
   summaries: [],
   tasks: [],
   threads: new Map(),
-  tabs: [{ kind: 'files' }],
-  view: { kind: 'files' },
-  back: [],
-  forward: [],
-  files: { path: null, cache: new Map() },
+  view: { kind: 'new' },
+  lastThreadId: null,
+  files: { path: null, cache: new Map(), inflight: null },
+  panes: { nav: false, inspector: false },
+  appearance: 'system',
+  sending: false,
 };
 
 // ---------- small DOM helpers ----------
@@ -77,55 +79,73 @@ function currentThreadId() {
 
 // ---------- theme ----------
 
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  try { localStorage.setItem('verity-theme', theme); } catch { /* storage can be denied */ }
+function prefersDark() {
+  try {
+    return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches;
+  } catch {
+    return false;
+  }
+}
+
+function renderAppearance() {
+  for (const choice of ['light', 'dark', 'system']) {
+    $('theme-' + choice).classList.toggle('is-active', state.appearance === choice);
+  }
+}
+
+function applyTheme(choice) {
+  state.appearance = ['light', 'dark', 'system'].includes(choice) ? choice : 'system';
+  const resolved = state.appearance === 'system' ? (prefersDark() ? 'dark' : 'light') : state.appearance;
+  document.documentElement.dataset.theme = resolved;
+  try { localStorage.setItem('verity-theme', state.appearance); } catch { /* storage can be denied */ }
+  renderAppearance();
 }
 
 function initTheme() {
   let stored = null;
   try { stored = localStorage.getItem('verity-theme'); } catch { /* storage can be denied */ }
-  applyTheme(stored === 'dark' ? 'dark' : 'light');
+  applyTheme(stored ?? 'system');
+  try {
+    if (typeof matchMedia === 'function') {
+      matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (state.appearance === 'system') applyTheme('system');
+      });
+    }
+  } catch { /* system theme tracking is best-effort */ }
 }
 
 // ---------- navigation ----------
 
-function navigate(view, push = true) {
-  if (push) {
-    state.back.push(state.view);
-    state.forward.length = 0;
-  }
-  if (state.view.kind === 'thread') state.lastThreadId = state.view.id;
-  state.view = view;
-  if (view.kind === 'thread') ensureThreadTab(view.id);
-  if (view.kind === 'new' && !state.tabs.some(tab => tab.kind === 'new')) {
-    state.tabs.push({ kind: 'new' });
-  }
-  renderAll();
-}
-
-function goBack() {
-  if (!state.back.length) return;
-  state.forward.push(state.view);
-  const view = state.back.pop();
+function navigate(view) {
   if (state.view.kind === 'thread') state.lastThreadId = state.view.id;
   state.view = view;
   renderAll();
 }
 
-function goForward() {
-  if (!state.forward.length) return;
-  state.back.push(state.view);
-  const view = state.forward.pop();
-  if (state.view.kind === 'thread') state.lastThreadId = state.view.id;
-  state.view = view;
-  renderAll();
+function isNarrow() {
+  try {
+    return typeof matchMedia === 'function' && matchMedia('(max-width: 1024px)').matches;
+  } catch {
+    return false;
+  }
 }
 
-function ensureThreadTab(id) {
-  if (!state.tabs.some(tab => tab.kind === 'thread' && tab.id === id)) {
-    state.tabs.push({ kind: 'thread', id });
-  }
+function renderScrim() {
+  $('scrim').hidden = !(isNarrow() && (state.panes.nav || state.panes.inspector));
+}
+
+function closePanes() {
+  state.panes.nav = false;
+  state.panes.inspector = false;
+  $('app').classList.toggle('nav-off', false);
+  $('app').classList.toggle('inspector-off', false);
+  renderScrim();
+}
+
+function togglePane(name, className) {
+  state.panes[name] = !state.panes[name];
+  $('app').classList.toggle(className, state.panes[name]);
+  renderScrim();
 }
 
 // ---------- data loading ----------
@@ -169,14 +189,18 @@ async function fetchFile(threadId, path) {
 }
 
 async function createThread() {
+  if (state.sending) return;
   const goalEl = $('goal');
   const goal = goalEl.value.trim();
-  if (!goal) { goalEl.focus(); return; }
+  if (!goal) { if (goalEl.focus) goalEl.focus(); return; }
   const payload = {
     goal,
     taskId: $('task').value || 'messages',
     mode: $('mode').value === 'pi' ? 'pi' : 'fixture',
   };
+  state.sending = true;
+  $('send').disabled = true;
+  $('send-label').textContent = 'Starting…';
   try {
     const body = await fetchJson('/api/threads', {
       method: 'POST',
@@ -190,6 +214,10 @@ async function createThread() {
     renderAll();
   } catch (error) {
     pushLocalError(error.message ?? 'The run could not be started.');
+  } finally {
+    state.sending = false;
+    $('send').disabled = false;
+    $('send-label').textContent = 'Run';
   }
 }
 
@@ -206,31 +234,6 @@ function pushLocalError(text) {
 }
 
 // ---------- rendering: shell chrome ----------
-
-function renderTabs() {
-  const bar = $('tabbar');
-  bar.querySelectorAll('.tab[data-dynamic]').forEach(node => node.remove());
-  const add = $('tab-add');
-  for (const tab of state.tabs) {
-    if (tab.kind === 'files') continue;
-    const button = el('button', 'tab');
-    button.dataset.dynamic = 'true';
-    if (tab.kind === 'new') {
-      button.textContent = 'New task';
-      button.classList.toggle('is-active', state.view.kind === 'new');
-      button.addEventListener('click', () => navigate({ kind: 'new' }));
-    } else {
-      const summary = state.summaries.find(entry => entry.id === tab.id);
-      const title = summary?.title ?? state.threads.get(tab.id)?.title ?? 'Thread';
-      button.textContent = title;
-      button.title = title;
-      button.classList.toggle('is-active', state.view.kind === 'thread' && state.view.id === tab.id);
-      button.addEventListener('click', () => openThread(tab.id));
-    }
-    bar.insertBefore(button, add);
-  }
-  $('tab-files').classList.toggle('is-active', state.view.kind === 'files');
-}
 
 function renderSidebar() {
   $('host').textContent = state.hostname || 'unknown host';
@@ -249,7 +252,7 @@ function renderSidebar() {
     row.appendChild(dot);
     row.appendChild(el('span', 'title', summary.title || 'Untitled'));
     row.appendChild(el('span', 'count', String(summary.messages ?? 0)));
-    row.addEventListener('click', () => openThread(summary.id));
+    row.addEventListener('click', () => { closePanes(); openThread(summary.id); });
     list.appendChild(row);
   }
 }
@@ -280,22 +283,52 @@ function renderComposer() {
   piOption.disabled = !state.pi.ready;
   piOption.title = state.pi.ready ? 'Runs the real Pi agent loop' : (state.pi.reason ?? 'Pi is not configured');
 
-  $('ws-host').textContent = state.hostname || 'unknown host';
+  // Top readiness describes the selected mode only: Demo (the fixture
+  // worker) is always ready offline; the Pi verdict and its concise
+  // reason appear only when Pi is actually selected.
+  const piSelected = $('mode').value === 'pi';
+  const ready = piSelected ? state.pi.ready : true;
+  $('route-label').textContent = piSelected
+    ? (state.pi.ready ? 'Pi ready' : 'Pi unavailable')
+    : 'Demo ready';
+  $('route-dot').className = 'dot ' + (ready ? 'dot-done' : 'dot-queued');
   renderModeNote();
 }
 
 function renderModeNote() {
   const note = $('mode-note');
-  if ($('mode').value === 'pi') {
-    note.textContent = state.pi.ready
-      ? 'Pi mode runs the real agent loop against the approved cost ceiling.'
-      : 'Pi mode unavailable. ' + (state.pi.reason ?? 'No route configured.');
+  if ($('mode').value === 'pi' && !state.pi.ready) {
+    note.textContent = state.pi.reason ?? 'Pi is not configured.';
+    note.hidden = false;
   } else {
-    note.textContent = 'Fixture mode runs offline against the demo oracle.';
+    note.textContent = '';
+    note.hidden = true;
   }
 }
 
 // ---------- rendering: transcript ----------
+
+// Exact technical receipt under a collapsed disclosure: the visible card
+// stays human-readable, while the full operation id, commit, and
+// assurance remain one click away, verbatim, for every outcome.
+function renderResultDetails(data) {
+  const disclosure = el('details', 'result-details');
+  disclosure.appendChild(el('summary', null, 'Details'));
+  const list = el('div', 'result-exact');
+  const rows = [];
+  if (data.operation) rows.push(['Operation', String(data.operation)]);
+  if (data.commit) rows.push(['Commit', String(data.commit)]);
+  if (data.assurance) rows.push(['Assurance', JSON.stringify(data.assurance)]);
+  if (data.detail) rows.push(['Result', String(data.detail)]);
+  for (const [key, value] of rows) {
+    const row = el('div', 'result-row');
+    row.appendChild(el('span', 'k', key));
+    row.appendChild(el('span', 'v', value));
+    list.appendChild(row);
+  }
+  disclosure.appendChild(list);
+  return disclosure;
+}
 
 function renderMessage(message) {
   if (message.role === 'result') {
@@ -308,9 +341,7 @@ function renderMessage(message) {
     const detail = el('div', 'detail');
     detail.appendChild(richText(data.detail ?? ''));
     card.appendChild(detail);
-    if (data.operation) {
-      card.appendChild(el('div', 'task', 'operation ' + String(data.operation).slice(0, 8)));
-    }
+    card.appendChild(renderResultDetails(data));
     return card;
   }
   if (message.role === 'error') {
@@ -334,10 +365,7 @@ function renderTranscript() {
   wrap.textContent = '';
   const thread = currentThread();
   if (!thread) {
-    const empty = el('div', 'transcript-empty');
-    empty.appendChild(el('div', null, 'No thread open.'));
-    empty.appendChild(el('div', null, 'Write a goal below and press Run.'));
-    wrap.appendChild(empty);
+    wrap.appendChild(el('div', 'transcript-empty', 'Start by describing a task below.'));
     return;
   }
   if (!thread.messages.length) {
@@ -351,6 +379,7 @@ function renderTranscript() {
 function renderThreadHead() {
   const thread = currentThread();
   $('thread-title').textContent = thread ? (thread.title || 'Untitled') : 'New task';
+  $('thread-sub').textContent = thread ? ((thread.taskId ?? 'task') + ' · ' + (thread.mode ?? 'fixture')) : '';
   const chipEl = $('thread-status');
   const status = thread?.status ?? 'idle';
   const [cls, label] = THREAD_CHIPS[status] ?? ['chip-idle', 'Idle'];
@@ -358,11 +387,10 @@ function renderThreadHead() {
   chipEl.textContent = label;
 }
 
-// ---------- rendering: context panel ----------
+// ---------- rendering: inspector ----------
 
 function renderContext() {
   const thread = currentThread();
-  $('ctx-title').textContent = thread ? (thread.title || 'Untitled') : 'No thread selected';
 
   const rows = $('ctx-rows');
   rows.textContent = '';
@@ -380,12 +408,6 @@ function renderContext() {
       row.appendChild(el('span', 'k', key));
       row.appendChild(el('span', 'v', value));
       rows.appendChild(row);
-    }
-    if (changed.length) {
-      const list = el('div', 'ctx-changed');
-      for (const path of changed.slice(0, 12)) list.appendChild(el('div', null, path));
-      if (changed.length > 12) list.appendChild(el('div', null, '+ ' + (changed.length - 12) + ' more'));
-      rows.appendChild(list);
     }
   }
 
@@ -413,7 +435,7 @@ function renderContext() {
   }
 }
 
-// ---------- rendering: files tab ----------
+// ---------- rendering: files ----------
 
 function renderFiles() {
   const threadId = currentThreadId();
@@ -424,7 +446,7 @@ function renderFiles() {
   if (!paths.length) {
     list.appendChild(el('div', 'side-empty', thread
       ? 'No changed files in this run.'
-      : 'Open a thread to browse its workspace.'));
+      : 'No thread open.'));
   }
   for (const path of paths) {
     const row = el('button', 'file-row');
@@ -432,22 +454,25 @@ function renderFiles() {
     row.textContent = path;
     row.title = path;
     row.classList.toggle('is-active', state.files.path === path);
-    row.addEventListener('click', () => openFile(path));
+    row.addEventListener('click', () => { closePanes(); openFile(path); });
     list.appendChild(row);
   }
   $('file-path').disabled = !thread;
   $('file-form').querySelector('button').disabled = !thread;
 
+  const view = $('file-view');
+  const details = $('ctx-details');
   const name = $('file-name');
   const content = $('file-content');
-  if (!state.files.path) {
+  details.hidden = Boolean(state.files.path && thread);
+  $('app').classList.toggle('file-open', Boolean(state.files.path && thread));
+  if (!state.files.path || !thread) {
+    view.hidden = true;
     name.textContent = '';
-    content.className = 'file-content empty';
-    content.textContent = thread
-      ? 'Pick a changed file, or open any path from refs/heads/protected.'
-      : 'No thread open.';
+    content.textContent = '';
     return;
   }
+  view.hidden = false;
   name.textContent = state.files.path;
   const cacheKey = threadId + '|' + state.files.path;
   if (state.files.cache.has(cacheKey)) {
@@ -456,11 +481,15 @@ function renderFiles() {
     return;
   }
   content.className = 'file-content empty';
-  content.textContent = 'Loading ' + state.files.path + ' ...';
+  content.textContent = 'Loading ' + state.files.path + ' …';
+  if (state.files.inflight === cacheKey) return;
+  state.files.inflight = cacheKey;
   fetchFile(threadId, state.files.path).then(text => {
     state.files.cache.set(cacheKey, text);
-    if (state.view.kind === 'files' && state.files.path) renderFiles();
+    if (state.files.inflight === cacheKey) state.files.inflight = null;
+    if (state.files.path && currentThreadId() === threadId) renderFiles();
   }).catch(error => {
+    if (state.files.inflight === cacheKey) state.files.inflight = null;
     content.className = 'file-content empty';
     content.textContent = error.message;
   });
@@ -468,25 +497,18 @@ function renderFiles() {
 
 function openFile(path) {
   state.files.path = path;
-  if (state.view.kind !== 'files') navigate({ kind: 'files' });
-  else renderAll();
+  renderAll();
 }
 
 // ---------- top-level render ----------
 
 function renderAll() {
-  renderTabs();
   renderSidebar();
   renderThreadHead();
   renderTranscript();
   renderComposer();
   renderContext();
-  const isFiles = state.view.kind === 'files';
-  $('files-view').hidden = !isFiles;
-  $('thread-view').hidden = isFiles;
-  if (isFiles) renderFiles();
-  $('nav-back').disabled = !state.back.length;
-  $('nav-forward').disabled = !state.forward.length;
+  renderFiles();
 }
 
 async function openThread(id) {
@@ -519,7 +541,6 @@ function connectEvents() {
       if (!state.summaries.some(entry => entry.id === summary.id)) {
         state.summaries = [summary, ...state.summaries];
         renderSidebar();
-        renderTabs();
       }
     } catch { /* keep the last known state */ }
   });
@@ -540,15 +561,18 @@ function connectEvents() {
 }
 
 function bindUi() {
-  $('new-task').addEventListener('click', () => navigate({ kind: 'new' }));
-  $('tab-add').addEventListener('click', () => navigate({ kind: 'new' }));
-  $('tab-files').addEventListener('click', () => navigate({ kind: 'files' }));
-  $('project-row').addEventListener('click', () => navigate({ kind: 'files' }));
-  $('nav-back').addEventListener('click', goBack);
-  $('nav-forward').addEventListener('click', goForward);
-  $('theme-toggle').addEventListener('click', () => {
-    applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+  $('new-task').addEventListener('click', () => { closePanes(); navigate({ kind: 'new' }); });
+  $('project-row').addEventListener('click', () => { closePanes(); navigate({ kind: 'new' }); });
+  $('nav-toggle').addEventListener('click', () => togglePane('nav', 'nav-off'));
+  $('inspector-toggle').addEventListener('click', () => togglePane('inspector', 'inspector-off'));
+  $('scrim').addEventListener('click', closePanes);
+  $('settings-btn').addEventListener('click', () => {
+    const dialog = $('settings-dialog');
+    if (dialog.showModal) dialog.showModal();
   });
+  for (const choice of ['light', 'dark', 'system']) {
+    $('theme-' + choice).addEventListener('click', () => applyTheme(choice));
+  }
   $('send').addEventListener('click', () => { createThread(); });
   $('goal').addEventListener('keydown', event => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -556,12 +580,27 @@ function bindUi() {
       createThread();
     }
   });
-  $('mode').addEventListener('change', renderModeNote);
+  $('mode').addEventListener('change', renderComposer);
   $('file-form').addEventListener('submit', event => {
     event.preventDefault();
     const path = $('file-path').value.trim();
     if (path) openFile(path);
   });
+  $('file-close').addEventListener('click', () => {
+    state.files.path = null;
+    renderFiles();
+  });
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      if (state.files.path) {
+        state.files.path = null;
+        renderFiles();
+        return;
+      }
+      closePanes();
+    });
+  }
 }
 
 // ---------- boot ----------

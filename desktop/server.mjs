@@ -47,13 +47,24 @@ function threadSummary(thread) {
   return { id, title, taskId, mode, status, createdAt, messages: messages.length };
 }
 
-// Result is { task, status, detail, operation? }: the run's raw promotion
-// record projected onto the wire contract in exactly one place.
+// Result is { task, status, detail, operation?, commit?, assurance? }:
+// the run's raw promotion record projected onto the wire contract in
+// exactly one place. The visible detail stays human-readable; the exact
+// commit and assurance ride along as additive read-only fields so the
+// renderer can put them under a collapsed disclosure without re-deriving
+// them from prose. Non-promoted outcomes keep the full reason in detail.
 function resultView(result) {
   const detail = result.status === 'promoted'
-    ? `Promoted as ${result.commit?.slice(0, 8)} · assurance ${JSON.stringify(result.assurance)}`
+    ? (result.commit ? `Promoted as ${result.commit.slice(0, 8)}` : 'Promoted')
     : result.reason ?? result.status;
-  return { task: result.id, status: result.status, detail, operation: result.operation ?? null };
+  return {
+    task: result.id,
+    status: result.status,
+    detail,
+    operation: result.operation ?? null,
+    commit: result.commit ?? null,
+    assurance: result.assurance ?? null,
+  };
 }
 // The wire contract: exactly the Thread shape, never the internal record
 // (settings and the seed commit stay private to the store).
@@ -237,7 +248,7 @@ function invalidThreadRequest(payload) {
   return null;
 }
 
-const mime = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
+const mime = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
 
 let catalogPromise;
 
