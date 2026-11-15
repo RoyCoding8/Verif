@@ -167,6 +167,14 @@ describe('boot and task catalog', () => {
     assert.ok(existsSync(dataDir), `expected ${dataDir} to be created on boot`);
   });
 
+  test('static assets: the self-hosted font is served as font/woff2 and traversal stays 404', async () => {
+    const font = await fetch(backend.base + '/fonts/roboto-latin.woff2');
+    assert.equal(font.status, 200);
+    assert.equal(font.headers.get('content-type'), 'font/woff2');
+    const traversal = await fetch(backend.base + '/..%2fserver.mjs');
+    assert.ok(traversal.status === 404 || traversal.status === 400, 'static serving never escapes public/');
+  });
+
   test('GET /api/tasks lists reserve, messages, api and stays memoized', async () => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const { status, body } = await getJson(backend.base, '/api/tasks');

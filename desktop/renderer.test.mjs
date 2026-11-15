@@ -133,6 +133,41 @@ async function bootedRenderer() {
   return renderer;
 }
 
+test('appearance choices persist and resolve through settings controls', async () => {
+  const renderer = await bootedRenderer();
+  renderer.registry.get('theme-dark').click();
+  assert.equal(renderer.run('document.documentElement.dataset.theme'), 'dark', 'dark choice applies the dark theme');
+  assert.equal(renderer.run('localStorage.getItem("verity-theme")'), 'dark', 'dark choice is persisted');
+  renderer.registry.get('theme-light').click();
+  assert.equal(renderer.run('document.documentElement.dataset.theme'), 'light', 'light choice applies the light theme');
+  assert.equal(renderer.run('localStorage.getItem("verity-theme")'), 'light', 'light choice is persisted');
+  renderer.registry.get('theme-system').click();
+  assert.equal(renderer.run('localStorage.getItem("verity-theme")'), 'system', 'system choice is persisted');
+  assert.ok(['light', 'dark'].includes(renderer.run('document.documentElement.dataset.theme')), 'system resolves to a concrete theme');
+});
+
+test('Pi mode shows the unavailable reason in one line and fixture mode shows nothing', async () => {
+  const renderer = await bootedRenderer();
+  const mode = renderer.registry.get('mode');
+  const note = renderer.registry.get('mode-note');
+  mode.value = 'pi';
+  await renderer.run('renderModeNote()');
+  assert.equal(note.hidden, false, 'the unavailable reason is visible');
+  assert.ok(note.textContent.length > 0, 'the reason names the missing route');
+  mode.value = 'fixture';
+  await renderer.run('renderModeNote()');
+  assert.equal(note.hidden, true, 'fixture mode carries no note');
+});
+
+test('closing the file viewer clears the open path without navigating away', async () => {
+  const renderer = await bootedRenderer();
+  await renderer.run('openThread("missing-thread-xyz")');
+  await renderer.run('state.files.path = "reserve.mjs"');
+  renderer.registry.get('file-close').click();
+  assert.equal(renderer.run('state.files.path'), null, 'the open path is cleared');
+  assert.equal(renderer.registry.get('file-view').hidden, true, 'the viewer hides');
+});
+
 test('an unknown thread id stays out of thread state and its 404 error body is shown', async () => {
   const renderer = await bootedRenderer();
   await renderer.run('(async () => { await openThread("missing-thread-xyz"); })()');

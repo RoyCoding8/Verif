@@ -237,7 +237,7 @@ function invalidThreadRequest(payload) {
   return null;
 }
 
-const mime = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
+const mime = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
 
 let catalogPromise;
 
