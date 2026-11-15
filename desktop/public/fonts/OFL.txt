@@ -1,4 +1,4 @@
-Source: Roboto variable font (latin subset), Google Fonts - https://fonts.googleapis.com/css2?family=Roboto (retrieved 2025-11-15), SIL Open Font License 1.1 (below).
+Source: Roboto variable font (latin subset), Google Fonts - https://fonts.googleapis.com/css2?family=Roboto, SIL Open Font License 1.1 (below).
 
 Copyright 2011 The Roboto Project Authors (https://github.com/googlefonts/roboto-classic)
 
