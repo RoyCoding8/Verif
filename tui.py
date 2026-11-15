@@ -148,6 +148,11 @@ def missing_tools(spec):
     return [tool for tool in spec['needs'] if shutil.which(tool) is None]
 
 
+def visible_commands(owner):
+    """CI rows need the owner's GitHub account, so a stranger never sees them."""
+    return [spec for spec in COMMANDS if owner or spec['kind'] == KIND_LOCAL]
+
+
 def is_dispatch(spec):
     """A workflow dispatch, as opposed to a status listing."""
     argv = spec['argv']
@@ -288,49 +293,59 @@ def read_key():
         termios.tcsetattr(fd, termios.TCSADRAIN, previous)
 
 
-def render_menu(last_state):
+def render_menu(rows, owner, last_state):
     print()
     print('Verity terminal front end')
-    print('  local commands run here; CI commands run on GitHub runners')
+    if owner:
+        print('  local commands run here; CI commands run on GitHub runners')
+    else:
+        print('  every command below runs on this machine')
     print()
-    for position, spec in enumerate(COMMANDS):
-        key = '0' if position == len(COMMANDS) - 1 else str(position + 1)
+    for position, spec in enumerate(rows):
+        key = '0' if position == len(rows) - 1 else str(position + 1)
         print(f'  [{key}] {spec["label"]:<38} {spec["runs_on"]}')
     print()
+    if not owner:
+        print('  [o] owner commands (needs your GitHub account)')
     print('  [q] quit')
     if last_state:
         print(f'  last result: {last_state}')
     print()
 
 
-def menu():
+def menu(owner):
     state = RUN_IDLE
     while True:
-        render_menu(state)
+        rows = visible_commands(owner)
+        render_menu(rows, owner, state)
         print('select: ', end='', flush=True)
         key = read_key()
         print()
         if key in ('q', 'Q', '\x1b', '\x03'):
             return 0
+        if not owner and key in ('o', 'O'):
+            owner = True
+            continue
         if key == '0':
-            index = len(COMMANDS) - 1
-        elif key.isdigit() and 1 <= int(key) <= len(COMMANDS):
+            index = len(rows) - 1
+        elif key.isdigit() and 1 <= int(key) <= len(rows):
             index = int(key) - 1
         else:
             state = RUN_IDLE
             continue
-        state = run_action(COMMANDS[index])
+        state = run_action(rows[index])
         print(f'result: {state}')
 
 
 def main(argv):
     if '--check' in argv:
         return run_check()
+    owner = '--owner' in argv
     if '--list' in argv:
-        for spec in COMMANDS:
+        for spec in visible_commands(owner):
             print(json.dumps(spec))
         return 0
-    return menu()
+    return menu(owner)
 
 
 if __name__ == '__main__':

@@ -3,3 +3,15 @@
 /node_modules/
 /.verity/
 /desktop/.data/
+
+# local-only runtime noise, never part of the deliverable
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+
+# credentials stay on the operator's machine
+.env
+.env.*
+*.pem
+*.key
