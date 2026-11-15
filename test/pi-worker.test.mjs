@@ -25,6 +25,114 @@ async function seedFile(workspace, relative, content) {
   await writeFile(path.join(workspace, relative), content);
 }
 
+// Every request-entry method of the pinned @earendil-works/pi-coding-agent
+// 1.5.2 ModelRuntime (dist/core/model-runtime.d.ts), plus non-request utilities.
+function fullRequestRuntime(dispatched) {
+  return {
+    stream(...args) { dispatched.push("stream"); },
+    complete(...args) { dispatched.push("complete"); },
+    streamSimple(...args) { dispatched.push("streamSimple"); },
+    completeSimple(...args) { dispatched.push("completeSimple"); },
+    streamDeferred(...args) { dispatched.push("streamDeferred"); },
+    fetchDeferred(...args) { dispatched.push("fetchDeferred"); },
+    generateImages(...args) { dispatched.push("generateImages"); },
+    classify(...args) { dispatched.push("classify"); },
+    cancelDeferred(...args) { dispatched.push("cancelDeferred"); return "cancelled"; },
+    getModel(...args) { dispatched.push("getModel"); return { provider: args[0], id: args[1] }; },
+  };
+}
+
+const catalogHandle = { provider: "google", modelId: "gemini-2.5-flash", api: "openai-completions", id: "row-1" };
+
+const CONTEXT_ENTRY_METHODS = ["stream", "complete", "streamSimple", "completeSimple", "generateImages", "classify"];
+
+test("every context request entry is priced from the catalog and admitted before dispatch", async t => {
+  const workspace = await fixture(t);
+  const order = [];
+  const admissions = [];
+  const context = [{ role: "user", content: "hello world" }];
+  const { sdk } = fakeSdk({
+    promptRun: options => {
+      const runtime = options.modelRuntime;
+      runtime.stream(catalogModel, context);
+      runtime.complete(catalogModel, context);
+      runtime.streamSimple(catalogModel, context);
+      runtime.completeSimple(catalogModel, context);
+      runtime.generateImages(catalogModel, context);
+      runtime.classify(catalogModel, context);
+    },
+  });
+  const result = await runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime: fullRequestRuntime(order),
+    admitRequest: ({ boundMicros, requestBound }) => {
+      order.push("admit");
+      admissions.push({ boundMicros, requestBound });
+    },
+  }));
+  assert.equal(result.status, "candidate");
+  assert.deepEqual(order, [
+    "admit", "stream", "admit", "complete", "admit", "streamSimple",
+    "admit", "completeSimple", "admit", "generateImages", "admit", "classify",
+  ]);
+  const inputBytes = Buffer.byteLength(JSON.stringify(context), "utf8");
+  assert.deepEqual(admissions.map(({ requestBound }) => ({ ...requestBound })), Array(6).fill({
+    provider: "google", model: "gemini-2.5-flash", inputUsdPerMTok: 0.6, outputUsdPerMTok: 2.5,
+    maxOutputTokens: 1_000, source: "pi-model-catalog",
+  }));
+  assert.deepEqual(admissions.map(({ boundMicros }) => boundMicros),
+    Array(6).fill(Math.ceil(inputBytes * 0.6) + Math.ceil(1_000 * 2.5)));
+});
+
+test("zero budget refuses every context request entry before dispatch", async t => {
+  const workspace = await fixture(t);
+  for (const method of CONTEXT_ENTRY_METHODS) {
+    const dispatched = [];
+    const { sdk } = fakeSdk({ promptRun: options => {
+      try { options.modelRuntime[method](catalogModel, []); } catch { /* the session reports errors as messages */ }
+    } });
+    await assert.rejects(runPiWorker(inspectRequest({
+      workspace, sdk,
+      model: catalogModel, modelRuntime: fullRequestRuntime(dispatched),
+      admitRequest: () => { throw new CostExhausted("Cost ceiling exhausted: zero budget"); },
+    })), /Cost ceiling exhausted/);
+    assert.deepEqual(dispatched, [], method);
+  }
+});
+
+test("deferred request entries are refused before dispatch while admission is active", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const { sdk } = fakeSdk({ promptRun: options => {
+    try { options.modelRuntime.streamDeferred(catalogModel, catalogHandle); } catch { /* the session reports errors as messages */ }
+    try { options.modelRuntime.fetchDeferred(catalogModel, catalogHandle); } catch { /* the session reports errors as messages */ }
+  } });
+  await assert.rejects(runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime: fullRequestRuntime(dispatched),
+    admitRequest: () => { throw new Error("admission must not be reached for a deferred request"); },
+  })), /Deferred model request cannot be priced before dispatch: fetchDeferred/);
+  assert.deepEqual(dispatched, []);
+});
+
+test("non-request runtime utilities stay unwrapped and dispatch without admission", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const admissions = [];
+  const { sdk } = fakeSdk({ promptRun: options => {
+    assert.deepEqual(options.modelRuntime.getModel("google", "gemini-2.5-flash"), { provider: "google", id: "gemini-2.5-flash" });
+    assert.equal(options.modelRuntime.cancelDeferred(catalogModel, catalogHandle), "cancelled");
+  } });
+  const result = await runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime: fullRequestRuntime(dispatched),
+    admitRequest: ({ requestBound }) => admissions.push(requestBound),
+  }));
+  assert.equal(result.status, "candidate");
+  assert.deepEqual(dispatched, ["getModel", "cancelDeferred"]);
+  assert.deepEqual(admissions, []);
+});
+
 function recordingRuntime(dispatched) {
   return {
     stream(...args) { dispatched.push(args); },

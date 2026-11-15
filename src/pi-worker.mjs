@@ -74,18 +74,28 @@ function textResult(text, details = {}, isError = false) {
   return { content: [{ type: "text", text }], details, ...(isError ? { isError: true } : {}) };
 }
 
-const ADMISSION_METHODS = ["stream", "streamSimple", "generateImages", "classify"];
+// Request-entry methods of the pinned @earendil-works/pi-coding-agent 1.5.2
+// ModelRuntime (dist/core/model-runtime.d.ts). Context entries take
+// (model, context, options) and are priced from the pinned catalog entry and
+// admitted against the hard cost ledger before they are issued. Deferred
+// entries (streamDeferred, fetchDeferred) take a DeferredHandle instead of a
+// Context: their billed usage is decided by the original deferred submission,
+// which such a call cannot see, so they are refused before dispatch rather
+// than priced from the handle. cancelDeferred and the auth/getter surface are
+// non-request utilities and stay unwrapped.
+const CONTEXT_ENTRY_METHODS = ["stream", "complete", "streamSimple", "completeSimple", "generateImages", "classify"];
+const DEFERRED_ENTRY_METHODS = ["streamDeferred", "fetchDeferred"];
 
-// Non-mutating view of a model runtime that prices every provider request
-// from the pinned catalog entry and admits it against the hard cost ledger
-// before it is issued. Refusals leave the request unsent.
-function admissionRuntime(runtime, admit) {
+// Non-mutating view of a model runtime that admits or refuses every provider
+// request entry before it is issued. Refusals leave the request unsent.
+function admissionRuntime(runtime, admit, refuse) {
   return new Proxy(runtime, {
     get(target, property) {
       const value = Reflect.get(target, property, target);
       if (typeof value !== "function") return value;
       const bound = value.bind(target);
-      if (!ADMISSION_METHODS.includes(property)) return bound;
+      if (DEFERRED_ENTRY_METHODS.includes(property)) return () => refuse(property);
+      if (!CONTEXT_ENTRY_METHODS.includes(property)) return bound;
       return (...args) => {
         const [requestModel, context] = args;
         admit(requestModel, context);
@@ -362,6 +372,10 @@ export async function runPiWorker({ workspace, goal, scope, signal, runCheck, sd
         admissionRefusal = error;
         throw error;
       }
+    }, property => {
+      const error = new Error(`Deferred model request cannot be priced before dispatch: ${property}`);
+      admissionRefusal = error;
+      throw error;
     });
   }
   const created = await pi.createAgentSession({
