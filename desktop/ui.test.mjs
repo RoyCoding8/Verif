@@ -54,6 +54,8 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     assert.ok(detailsIndex > contextIndex && detailsIndex < fileIndex,
       'inspector details precede the file view inside the rail');
     assert.ok(!html.includes('id="ctx-title"'), 'inspector does not repeat the thread title');
+    assert.ok(html.includes('<option value="fixture">Demo</option>'),
+      'the task chooser reads Demo while keeping the fixture payload value');
     assert.ok(html.includes('rows="1"'), 'composer textarea is one row tall');
     assert.ok(html.includes('aria-label="Task"') && html.includes('aria-label="Mode"'),
       'composer selects keep accessible names without visible labels');

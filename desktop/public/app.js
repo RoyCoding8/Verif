@@ -5,7 +5,8 @@
 //   summary { id, title, taskId, mode, status, createdAt, messages: number }
 //   thread  summary + messages: Message[], results?: Result[], workspace?: Workspace
 //   message { role: user|system|agent|result|error, text?, data?: Result, ts }
-//   result  { task, status: promoted|refused|blocked, detail, operation? }
+//   result  { task, status: promoted|refused|blocked, detail, operation?,
+//             commit?, assurance? }
 //   task    { id, goal, dependencies }
 //   workspace { host, ref, head, files, changed: string[] }
 
@@ -282,8 +283,15 @@ function renderComposer() {
   piOption.disabled = !state.pi.ready;
   piOption.title = state.pi.ready ? 'Runs the real Pi agent loop' : (state.pi.reason ?? 'Pi is not configured');
 
-  $('route-label').textContent = state.pi.ready ? 'Pi ready' : 'Pi unavailable';
-  $('route-dot').className = 'dot ' + (state.pi.ready ? 'dot-done' : 'dot-queued');
+  // Top readiness describes the selected mode only: Demo (the fixture
+  // worker) is always ready offline; the Pi verdict and its concise
+  // reason appear only when Pi is actually selected.
+  const piSelected = $('mode').value === 'pi';
+  const ready = piSelected ? state.pi.ready : true;
+  $('route-label').textContent = piSelected
+    ? (state.pi.ready ? 'Pi ready' : 'Pi unavailable')
+    : 'Demo ready';
+  $('route-dot').className = 'dot ' + (ready ? 'dot-done' : 'dot-queued');
   renderModeNote();
 }
 
@@ -300,6 +308,28 @@ function renderModeNote() {
 
 // ---------- rendering: transcript ----------
 
+// Exact technical receipt under a collapsed disclosure: the visible card
+// stays human-readable, while the full operation id, commit, and
+// assurance remain one click away, verbatim, for every outcome.
+function renderResultDetails(data) {
+  const disclosure = el('details', 'result-details');
+  disclosure.appendChild(el('summary', null, 'Details'));
+  const list = el('div', 'result-exact');
+  const rows = [];
+  if (data.operation) rows.push(['Operation', String(data.operation)]);
+  if (data.commit) rows.push(['Commit', String(data.commit)]);
+  if (data.assurance) rows.push(['Assurance', JSON.stringify(data.assurance)]);
+  if (data.detail) rows.push(['Result', String(data.detail)]);
+  for (const [key, value] of rows) {
+    const row = el('div', 'result-row');
+    row.appendChild(el('span', 'k', key));
+    row.appendChild(el('span', 'v', value));
+    list.appendChild(row);
+  }
+  disclosure.appendChild(list);
+  return disclosure;
+}
+
 function renderMessage(message) {
   if (message.role === 'result') {
     const data = message.data ?? {};
@@ -311,9 +341,7 @@ function renderMessage(message) {
     const detail = el('div', 'detail');
     detail.appendChild(richText(data.detail ?? ''));
     card.appendChild(detail);
-    if (data.operation) {
-      card.appendChild(el('div', 'task', 'operation ' + String(data.operation).slice(0, 8)));
-    }
+    card.appendChild(renderResultDetails(data));
     return card;
   }
   if (message.role === 'error') {
@@ -552,7 +580,7 @@ function bindUi() {
       createThread();
     }
   });
-  $('mode').addEventListener('change', renderModeNote);
+  $('mode').addEventListener('change', renderComposer);
   $('file-form').addEventListener('submit', event => {
     event.preventDefault();
     const path = $('file-path').value.trim();

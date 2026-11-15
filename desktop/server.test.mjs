@@ -237,7 +237,8 @@ describe('fixture run for the reserve task', () => {
 
     const promoted = thread.messages.filter(message => message.role === 'result');
     assert.equal(promoted.length, 1);
-    assert.deepEqual(Object.keys(promoted[0].data).sort(), ['detail', 'operation', 'status', 'task']);
+    assert.deepEqual(Object.keys(promoted[0].data).sort(),
+      ['assurance', 'commit', 'detail', 'operation', 'status', 'task']);
     assert.equal(promoted[0].data.task, 'reserve');
     assert.equal(promoted[0].data.status, 'promoted');
     assert.equal(typeof promoted[0].data.operation, 'string');
@@ -248,15 +249,25 @@ describe('fixture run for the reserve task', () => {
     assert.equal(typeof thread.workspace.host, 'string');
     assert.match(thread.workspace.head, /^[0-9a-f]{8}$/);
     assert.notEqual(thread.workspace.head, seedHead, 'workspace head must advance past the seed');
-    assert.ok(promoted[0].data.detail.startsWith(`Promoted as ${thread.workspace.head} ·`),
-      'result detail names the promoted head');
+    assert.equal(promoted[0].data.detail, `Promoted as ${thread.workspace.head}`,
+      'result detail names the promoted head and no more');
+    assert.ok(!promoted[0].data.detail.includes('assurance')
+      && !promoted[0].data.detail.includes('{'),
+      'visible detail carries no raw assurance JSON');
+    assert.match(promoted[0].data.commit, /^[0-9a-f]{40}$/,
+      'additive commit field carries the full promoted commit');
+    assert.deepEqual(promoted[0].data.assurance, { stock: 'bounded' },
+      'additive assurance field carries the wire verdict verbatim');
     assert.ok(thread.workspace.files >= 3);
     assert.deepEqual(thread.workspace.changed, ['reserve.mjs']);
 
     assert.equal(thread.results.length, 1);
-    assert.deepEqual(Object.keys(thread.results[0]).sort(), ['detail', 'operation', 'status', 'task']);
+    assert.deepEqual(Object.keys(thread.results[0]).sort(),
+      ['assurance', 'commit', 'detail', 'operation', 'status', 'task']);
     assert.equal(thread.results[0].status, 'promoted');
     assert.equal(thread.results[0].operation, promoted[0].data.operation);
+    assert.equal(thread.results[0].commit, promoted[0].data.commit);
+    assert.deepEqual(thread.results[0].assurance, promoted[0].data.assurance);
 
     await sse.waitFor(
       entry => entry.event === 'thread:update' && entry.data.id === id && entry.data.status === 'done',

@@ -416,6 +416,19 @@ button {
 
 .msg .label { font-weight: 500; margin-bottom: 4px; }
 .msg .detail { overflow-wrap: anywhere; }
+
+.result-details { margin-top: 6px; }
+.result-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  list-style: none;
+}
+.result-details summary::-webkit-details-marker { display: none; }
+.result-exact { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.result-row { display: flex; gap: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.result-row .k { color: var(--on-surface-variant); min-width: 72px; font-family: var(--mono); }
+.result-row .v { font-family: var(--mono); }
 .msg .task { color: var(--on-surface-variant); font-size: 12px; font-family: var(--mono); }
 
 .msg .code, code {
