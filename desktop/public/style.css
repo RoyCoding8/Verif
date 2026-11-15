@@ -720,30 +720,6 @@ select:focus { border-color: var(--accent); outline: none; }
   color: var(--ink-2);
 }
 
-.ctx-cost { display: flex; flex-direction: column; gap: 6px; }
-
-.cost-meter {
-  height: 4px;
-  border-radius: var(--radius);
-  background: none;
-  border: 1px solid var(--line-2);
-  overflow: hidden;
-}
-
-.cost-fill {
-  height: 100%;
-  background: var(--accent);
-  min-width: 2px;
-}
-
-.cost-figures {
-  display: flex;
-  justify-content: space-between;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-2);
-}
-
 /* ---------- motion is minimal and collapses ---------- */
 
 @media (prefers-reduced-motion: reduce) {

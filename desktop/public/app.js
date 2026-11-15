@@ -130,30 +130,42 @@ function ensureThreadTab(id) {
 
 // ---------- data loading ----------
 
+// Single request boundary for the settled /api wire contract: every consumer
+// checks HTTP success before any state is written and keeps the backend's
+// error message; a dead backend becomes a visible error instead of silence.
+async function fetchJson(url, options) {
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch {
+    throw new Error('The Verity backend is not answering.');
+  }
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? ('Request failed with HTTP ' + response.status));
+  return body;
+}
+
 async function fetchState() {
-  const body = await (await fetch('/api/state')).json();
+  const body = await fetchJson('/api/state');
   state.hostname = body.hostname ?? '';
   state.summaries = body.threads ?? [];
   state.pi = body.pi ?? { ready: false };
 }
 
 async function fetchTasks() {
-  const body = await (await fetch('/api/tasks')).json();
+  const body = await fetchJson('/api/tasks');
   state.tasks = body.tasks ?? [];
 }
 
 async function fetchThread(id) {
-  const body = await (await fetch('/api/threads/' + encodeURIComponent(id))).json();
+  const body = await fetchJson('/api/threads/' + encodeURIComponent(id));
   state.threads.set(id, body);
   return body;
 }
 
 async function fetchFile(threadId, path) {
   const query = '/api/threads/' + encodeURIComponent(threadId) + '/file?path=' + encodeURIComponent(path);
-  const response = await fetch(query);
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error ?? ('Cannot open ' + path));
-  return body.content;
+  return (await fetchJson(query)).content;
 }
 
 async function createThread() {
@@ -165,20 +177,20 @@ async function createThread() {
     taskId: $('task').value || 'messages',
     mode: $('mode').value === 'pi' ? 'pi' : 'fixture',
   };
-  const response = await fetch('/api/threads', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const body = await response.json();
-  if (!response.ok) {
-    pushLocalError(body.error ?? 'The controller refused the task.');
-    return;
+  try {
+    const body = await fetchJson('/api/threads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    goalEl.value = '';
+    state.summaries = [body, ...state.summaries.filter(entry => entry.id !== body.id)];
+    navigate({ kind: 'thread', id: body.id });
+    await fetchThread(body.id);
+    renderAll();
+  } catch (error) {
+    pushLocalError(error.message ?? 'The run could not be started.');
   }
-  goalEl.value = '';
-  state.summaries = [body, ...state.summaries.filter(entry => entry.id !== body.id)];
-  navigate({ kind: 'thread', id: body.id });
-  fetchThread(body.id).then(() => renderAll()).catch(() => {});
 }
 
 function pushLocalError(text) {
@@ -348,35 +360,6 @@ function renderThreadHead() {
 
 // ---------- rendering: context panel ----------
 
-function firstNumber(values) {
-  for (const value of values) {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-  }
-  return null;
-}
-
-function costInfo(thread) {
-  if (!thread) return null;
-  const results = thread.results ?? [];
-  const spentMicros = firstNumber([
-    thread.costMicros,
-    thread.cost?.spentMicros,
-    ...results.map(result => result.costMicros ?? result.cost?.spentMicros),
-  ]);
-  const spentUsd = firstNumber([
-    thread.costUsd,
-    thread.cost?.spentUsd,
-    ...results.map(result => result.costUsd ?? result.cost?.usd),
-  ]);
-  const ceilingMicros = firstNumber([thread.costCeilingMicros, thread.cost?.ceilingMicros]);
-  const ceilingUsd = firstNumber([thread.costCeilingUsd, thread.cost?.ceilingUsd]) ??
-    (thread.mode === 'pi' ? firstNumber([state.pi.ceilingUsd]) : null);
-  const spent = spentUsd ?? (spentMicros === null ? null : spentMicros / 1e6);
-  const ceiling = ceilingUsd ?? (ceilingMicros === null ? null : ceilingMicros / 1e6);
-  if (spent === null) return null;
-  return { spent, ceiling };
-}
-
 function renderContext() {
   const thread = currentThread();
   $('ctx-title').textContent = thread ? (thread.title || 'Untitled') : 'No thread selected';
@@ -414,7 +397,7 @@ function renderContext() {
     resultsBlock.hidden = false;
     for (const result of results) {
       const row = el('div', 'ctx-result');
-      row.appendChild(el('span', 'task', result.task ?? result.id ?? 'task'));
+      row.appendChild(el('span', 'task', result.task ?? 'task'));
       row.appendChild(chip(RESULT_CHIPS, result.status, result.status));
       resultsWrap.appendChild(row);
     }
@@ -427,27 +410,6 @@ function renderContext() {
     resultsWrap.appendChild(row);
   } else {
     resultsBlock.hidden = true;
-  }
-
-  const costBlock = $('ctx-cost-block');
-  const costWrap = $('ctx-cost');
-  costWrap.textContent = '';
-  const cost = costInfo(thread);
-  if (cost) {
-    costBlock.hidden = false;
-    const figures = el('div', 'cost-figures');
-    figures.appendChild(el('span', null, '$' + cost.spent.toFixed(2) + ' spent'));
-    figures.appendChild(el('span', null, cost.ceiling === null ? 'no ceiling' : '$' + cost.ceiling.toFixed(2) + ' ceiling'));
-    costWrap.appendChild(figures);
-    if (cost.ceiling !== null && cost.ceiling > 0) {
-      const meter = el('div', 'cost-meter');
-      const fill = el('div', 'cost-fill');
-      fill.style.width = Math.min(100, (cost.spent / cost.ceiling) * 100).toFixed(1) + '%';
-      meter.appendChild(fill);
-      costWrap.appendChild(meter);
-    }
-  } else {
-    costBlock.hidden = true;
   }
 }
 
@@ -531,8 +493,8 @@ async function openThread(id) {
   navigate({ kind: 'thread', id });
   try {
     await fetchThread(id);
-  } catch {
-    pushLocalError('Cannot load thread ' + id + '.');
+  } catch (error) {
+    pushLocalError(error.message ?? ('Cannot load thread ' + id + '.'));
     return;
   }
   renderAll();
@@ -587,11 +549,11 @@ function bindUi() {
   $('theme-toggle').addEventListener('click', () => {
     applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
   });
-  $('send').addEventListener('click', () => { createThread().catch(() => {}); });
+  $('send').addEventListener('click', () => { createThread(); });
   $('goal').addEventListener('keydown', event => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
-      createThread().catch(() => {});
+      createThread();
     }
   });
   $('mode').addEventListener('change', renderModeNote);
@@ -610,8 +572,8 @@ async function boot() {
   connectEvents();
   try {
     await Promise.all([fetchState(), fetchTasks()]);
-  } catch {
-    pushLocalError('The Verity backend is not answering.');
+  } catch (error) {
+    pushLocalError(error.message);
     return;
   }
   renderAll();
