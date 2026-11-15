@@ -1,3 +1,5 @@
+import { explore as sharedExplore } from './explore.mjs';
+
 const approvalA = 'a'.repeat(64);
 const approvalB = 'b'.repeat(64);
 
@@ -125,23 +127,12 @@ export function transitions(state) {
 }
 
 export function explore() {
-  const states = new Map([[stateKey(initialState), initialState]]);
-  const paths = new Map([[stateKey(initialState), []]]);
-  const edges = [];
-  const queue = [initialState];
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const state = queue[cursor];
-    for (const next of transitions(state)) {
-      edges.push(next);
-      const key = stateKey(next.to);
-      if (!states.has(key)) {
-        states.set(key, next.to);
-        paths.set(key, [...paths.get(stateKey(state)), next.action]);
-        queue.push(next.to);
-      }
-    }
-  }
-  return { states: [...states.values()], paths, edges };
+  const graph = sharedExplore(initialState, (state) => transitions(state), stateKey);
+  return {
+    states: graph.states,
+    edges: graph.edges,
+    paths: new Map([...graph.paths].map(([key, path]) => [key, path.map((edge) => edge.action)])),
+  };
 }
 
 export function promotionInvariant(transitionValue) {
