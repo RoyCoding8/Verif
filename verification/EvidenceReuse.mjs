@@ -80,5 +80,3 @@ export function keyNegativeControl() {
     transition: transitions(stale, { unsafeAuthorization: true }).find(next => next.outcome === 'unsafe'),
   };
 }
-
-export const initial = initialState;

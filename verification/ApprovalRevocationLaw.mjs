@@ -94,20 +94,19 @@ export function transition(state, action, { ignoreRevocation = false } = {}) {
 
 export function transitions(state) {
   const edges = [];
-  for (const approval of [approvalA]) {
-    edges.push(edge(state, { type: 'revoke', approval },
-      transition(state, { type: 'revoke', approval }).state,
-      transition(state, { type: 'revoke', approval }).outcome));
-    const id = approval === approvalA ? 'attempt-a' : 'attempt-b';
-    if (!state.attempts.some(attempt => attempt.id === id)) {
-      const action = { type: 'register', id, approval };
-      const result = transition(state, action);
-      edges.push(edge(state, action, result.state, result.outcome));
-    } else if (state.attempts.find(attempt => attempt.id === id).active) {
-      const action = { type: 'cancel', id };
-      const result = transition(state, action);
-      edges.push(edge(state, action, result.state, result.outcome));
-    }
+  const approval = approvalA;
+  const id = 'attempt-a';
+  edges.push(edge(state, { type: 'revoke', approval },
+    transition(state, { type: 'revoke', approval }).state,
+    transition(state, { type: 'revoke', approval }).outcome));
+  if (!state.attempts.some(attempt => attempt.id === id)) {
+    const action = { type: 'register', id, approval };
+    const result = transition(state, action);
+    edges.push(edge(state, action, result.state, result.outcome));
+  } else if (state.attempts.find(attempt => attempt.id === id).active) {
+    const action = { type: 'cancel', id };
+    const result = transition(state, action);
+    edges.push(edge(state, action, result.state, result.outcome));
   }
   if (state.operation === null) {
     for (const attempt of state.attempts) {
