@@ -253,7 +253,7 @@ export async function runPiWorker({ workspace, goal, scope, signal, runCheck, sd
         try {
           const current = await openRead(args.path);
           const first = current.indexOf(args.oldText);
-          if (first < 0 || current.indexOf(args.oldText, first + args.oldText.length) >= 0) throw new Error("Edit text must match exactly one occurrence");
+          if (first < 0 || current.indexOf(args.oldText, first + 1) >= 0) throw new Error("Edit text must match exactly one occurrence");
           await writeFile(args.path, current.slice(0, first) + args.newText + current.slice(first + args.oldText.length));
           return textResult(`Edited ${args.path}`);
         } catch (error) { return textResult(error.message, {}, true); }

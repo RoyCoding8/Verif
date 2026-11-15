@@ -332,6 +332,24 @@ test("blocks forbidden, git, traversal, out-of-scope, and symlink paths", async 
   }
 });
 
+test("edit replaces exactly one occurrence and rejects ambiguous matches", async t => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk();
+  await runPiWorker({ workspace, goal: "Edit one spot", scope: { read: ["src"], write: ["src"], forbidden: [] }, sdk });
+  const edit = customTool(state, "edit");
+  const attempt = async (oldText, content) => {
+    await seedFile(workspace, "src/target.txt", content);
+    return edit.execute("edit", { path: "src/target.txt", oldText, newText: "Z" });
+  };
+  assert.equal((await attempt("aa", "aaa")).isError, true);
+  assert.equal(await readFile(path.join(workspace, "src", "target.txt"), "utf8"), "aaa");
+  assert.equal((await attempt("aba", "ababa")).isError, true);
+  assert.equal(await readFile(path.join(workspace, "src", "target.txt"), "utf8"), "ababa");
+  assert.equal((await attempt("aa", "aaZaa")).isError, true);
+  assert.equal((await attempt("b", "abc")).isError, undefined);
+  assert.equal(await readFile(path.join(workspace, "src", "target.txt"), "utf8"), "aZc");
+});
+
 test("applies Windows path rules to scope and tool paths", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows path rules are platform-specific");
   const workspace = await fixture(t);
