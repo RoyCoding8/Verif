@@ -230,6 +230,11 @@ async function evaluateNode({ inputs, obligation, workspace, signal, temp, runNa
   const env = { LANG: 'C', TZ: 'UTC', HOME: realTemp, USERPROFILE: realTemp,
     TMP: realTemp, TEMP: realTemp, TMPDIR: realTemp };
   if (process.platform === 'win32' && process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
+  // When the verifier itself runs on Electron's Node (the desktop backend is
+  // spawned as electron.exe with ELECTRON_RUN_AS_NODE=1), the child needs the
+  // same switch or process.execPath starts the Electron app runtime instead
+  // of the Node CLI that --permission requires.
+  if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
   const executionTimeout = deadline - Date.now();
   requireThat(executionTimeout > 0, 'Verification deadline expired');
   const { stdout, stderr } = await execute(process.execPath, [
