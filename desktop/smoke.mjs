@@ -1,10 +1,3 @@
-// Verity Desktop — smoke runner. Boots the shell window headlessly
-// (`electron desktop/main.mjs --smoke`), then drives one genuine fixture
-// task through the backend spawned exactly as main.mjs spawns it
-// (electron.exe with ELECTRON_RUN_AS_NODE=1) and requires it to reach
-// promoted with bounded assurance. Every phase is bounded in wall time and
-// cleans up only its own backend process and temp directory.
-
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
@@ -58,10 +51,6 @@ function freePort() {
   });
 }
 
-// One HTTP request sliced off a shared wall-clock deadline, requiring HTTP
-// success before the body is read: transport errors, timeouts, non-2xx
-// responses and malformed JSON each surface as their own failure instead of
-// falling through as empty data.
 async function api(base, path, deadline, init = {}) {
   let response;
   try {
@@ -76,8 +65,6 @@ async function api(base, path, deadline, init = {}) {
   return response.json();
 }
 
-// Bounded stop: graceful kill, await the real exit, escalate only if the
-// grace deadline passes, then await that exit too.
 async function stopChild(child, gracefulMs = 3000) {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const deadline = Date.now() + gracefulMs;
@@ -132,11 +119,8 @@ try {
     await sleep(250);
   }
   const result = thread.results?.[0];
-  // Pending structured replacement: coordinator will swap this strict detail
-  // predicate for status + result.commit + assurance.stock after the Muse
-  // structured-fields merge.
   if (thread.status !== 'done' || result?.status !== 'promoted' ||
-      !/^Promoted as [0-9a-f]{8} · assurance \{"stock":"bounded"\}$/.test(result.detail ?? '')) {
+      !/^[0-9a-f]{40}$/.test(result.commit ?? '') || result.assurance?.stock !== 'bounded') {
     throw new Error(`fixture run did not reach promoted with bounded assurance: ` +
       JSON.stringify({ status: thread.status, result: result ?? null }));
   }
@@ -146,8 +130,6 @@ try {
   process.exitCode = 1;
 } finally {
   if (!spawnError) await stopChild(backend);
-  // Recursive delete only for the directory this run created via mkdtemp:
-  // it must resolve under the OS temp root and carry the run's prefix.
   const resolved = resolve(data);
   if (resolved.startsWith(resolve(tmpdir()) + sep) && basename(resolved).startsWith(TEMP_PREFIX)) {
     await rm(resolved, { recursive: true, force: true, maxRetries: 5 });
