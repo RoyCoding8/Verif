@@ -15,3 +15,6 @@ Thumbs.db
 .env.*
 *.pem
 *.key
+
+# working conventions for coding agents, not part of the deliverable
+AGENTS.md
