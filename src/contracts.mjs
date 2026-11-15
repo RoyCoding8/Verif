@@ -79,7 +79,7 @@ export function parseLeanOracle(oracle) {
 
 export function safePath(value) {
   return typeof value === 'string' && value.split('/').every(part =>
-    part.length > 0 && !/[\\:*?"<>|\x00-\x1f]/.test(part) &&
+    part.length > 0 && !/[\\:*?"<>|\x00-\x1f\x7f]/.test(part) &&
     !/[. ]$/.test(part) && part.toLowerCase() !== '.git' &&
     !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part));
 }

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { after, test } from 'node:test';
 import { GitRepo } from '../src/git.mjs';
+import { safePath } from '../src/contracts.mjs';
 
 const tmp = path.resolve('tmp', `git-tests-${process.pid}`);
 fs.mkdirSync(tmp, { recursive: true });
@@ -190,4 +191,11 @@ test('rejects symlink tree entries and an occupied materialization target', () =
   fs.mkdirSync(occupied);
   fs.writeFileSync(path.join(occupied, 'keep'), 'keep');
   assert.throws(() => adapter.materialize(base, occupied), /must not exist/);
+});
+
+test('contract path validation rejects DEL in any segment', () => {
+  assert.equal(safePath('nested/run.sh'), true);
+  assert.equal(safePath('a\x7fb.txt'), false);
+  assert.equal(safePath('nested/\x7f/file.txt'), false);
+  assert.equal(safePath('nested/file\x7f.txt'), false);
 });
