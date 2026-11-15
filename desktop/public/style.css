@@ -394,7 +394,7 @@ button {
   color: var(--on-primary-container);
 }
 
-.msg-agent, .msg-system {
+.msg-system {
   max-width: 100%;
   color: var(--on-surface);
 }

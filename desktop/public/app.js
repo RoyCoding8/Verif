@@ -332,10 +332,7 @@ function renderMessage(message) {
     head.appendChild(el('span', 'task', data.task ?? 'task'));
     head.appendChild(chip(RESULT_CHIPS, data.status, data.status));
     card.appendChild(head);
-    // Visible summary comes from structured fields, never from parsed
-    // prose: legacy detail strings can carry raw receipts, so a promoted
-    // record without a commit falls back to the status alone. The verbatim
-    // record stays under Details.
+    // Legacy details can include raw receipts; keep them inside the disclosure.
     const detail = el('div', 'detail');
     detail.appendChild(richText(
       data.status === 'promoted'
