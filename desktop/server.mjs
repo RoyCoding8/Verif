@@ -49,10 +49,7 @@ function threadSummary(thread) {
 
 // Result is { task, status, detail, operation?, commit?, assurance? }:
 // the run's raw promotion record projected onto the wire contract in
-// exactly one place. The visible detail stays human-readable; the exact
-// commit and assurance ride along as additive read-only fields so the
-// renderer can put them under a collapsed disclosure without re-deriving
-// them from prose. Non-promoted outcomes keep the full reason in detail.
+// exactly one place.
 function resultView(result) {
   const detail = result.status === 'promoted'
     ? (result.commit ? `Promoted as ${result.commit.slice(0, 8)}` : 'Promoted')

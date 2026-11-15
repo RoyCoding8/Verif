@@ -283,9 +283,6 @@ function renderComposer() {
   piOption.disabled = !state.pi.ready;
   piOption.title = state.pi.ready ? 'Runs the real Pi agent loop' : (state.pi.reason ?? 'Pi is not configured');
 
-  // Top readiness describes the selected mode only: Demo (the fixture
-  // worker) is always ready offline; the Pi verdict and its concise
-  // reason appear only when Pi is actually selected.
   const piSelected = $('mode').value === 'pi';
   const ready = piSelected ? state.pi.ready : true;
   $('route-label').textContent = piSelected
@@ -308,9 +305,6 @@ function renderModeNote() {
 
 // ---------- rendering: transcript ----------
 
-// Exact technical receipt under a collapsed disclosure: the visible card
-// stays human-readable, while the full operation id, commit, and
-// assurance remain one click away, verbatim, for every outcome.
 function renderResultDetails(data) {
   const disclosure = el('details', 'result-details');
   disclosure.appendChild(el('summary', null, 'Details'));
@@ -338,8 +332,16 @@ function renderMessage(message) {
     head.appendChild(el('span', 'task', data.task ?? 'task'));
     head.appendChild(chip(RESULT_CHIPS, data.status, data.status));
     card.appendChild(head);
+    // Visible summary comes from structured fields, never from parsed
+    // prose: legacy detail strings can carry raw receipts, so a promoted
+    // record without a commit falls back to the status alone. The verbatim
+    // record stays under Details.
     const detail = el('div', 'detail');
-    detail.appendChild(richText(data.detail ?? ''));
+    detail.appendChild(richText(
+      data.status === 'promoted'
+        ? (data.commit ? `Promoted as ${String(data.commit).slice(0, 8)}` : RESULT_CHIPS.promoted[1])
+        : (data.detail ?? ''),
+    ));
     card.appendChild(detail);
     card.appendChild(renderResultDetails(data));
     return card;

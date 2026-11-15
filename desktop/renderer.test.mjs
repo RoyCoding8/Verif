@@ -286,6 +286,42 @@ test('a refused result keeps its full reason visible and exact under the disclos
   assert.ok(exact.includes('Candidate has no changes'), 'disclosure carries the exact result text');
 });
 
+test('promoted cards derive the visible summary from fields and keep the raw receipt under Details', async () => {
+  const renderer = await bootedRenderer();
+  const oldCard = renderer.run(`renderMessage({ role: 'result', data: {
+    task: 'reserve', status: 'promoted', operation: 'op-old-123',
+    detail: 'Promoted as abcdef12 · assurance {"message":"tested"}' } })`);
+  const oldExact1 = oldCard.children.find(node => node.tag === 'details');
+  assert.ok(!oldExact1.open, 'the legacy receipt starts collapsed');
+  const oldVisible = textOf(oldCard.children.find(node => node.className === 'detail'));
+  assert.equal(oldVisible, 'Promoted',
+    'a legacy record without commit/assurance fields falls back to the status alone');
+  assert.ok(!oldVisible.includes('{') && !oldVisible.includes('assurance') && !oldVisible.includes('abcdef12'),
+    'no raw receipt text and no commit parsed out of prose reach the visible summary');
+  assert.ok(textOf(oldExact1).includes('Promoted as abcdef12 · assurance {"message":"tested"}'),
+    'Details retains the verbatim legacy detail');
+
+  const newCard = renderer.run(`renderMessage({ role: 'result', data: {
+    task: 'reserve', status: 'promoted', detail: 'Promoted as abcdef12',
+    operation: 'op-exact-123', commit: 'abcdef1234567890abcdef1234567890abcdef12',
+    assurance: { stock: 'bounded' } } })`);
+  const newVisible = textOf(newCard.children.find(node => node.className === 'detail'));
+  assert.equal(newVisible, 'Promoted as abcdef12', 'the current card keeps the accepted summary copy');
+  assert.ok(!newVisible.includes('{') && !newVisible.includes('assurance'),
+    'no raw technical text is initially visible on a current card');
+  const newExact = textOf(newCard.children.find(node => node.tag === 'details'));
+  assert.ok(newExact.includes('abcdef1234567890abcdef1234567890abcdef12')
+    && newExact.includes(JSON.stringify({ stock: 'bounded' })),
+    'Details retains the exact commit and assurance on a current card');
+
+  const refused = renderer.run(`renderMessage({ role: 'result', data: {
+    task: 'reserve', status: 'refused', detail: 'Candidate has no changes or changed paths outside approved scope',
+    operation: 'op-ref-1', commit: null, assurance: null } })`);
+  const refusedVisible = textOf(refused.children.find(node => node.className === 'detail'));
+  assert.ok(refusedVisible.includes('Candidate has no changes'),
+    'a refused reason stays fully visible');
+});
+
 test('opening a file swaps the inspector rail to the file view, and Back returns to details', async () => {
   const renderer = await bootedRenderer();
   const before = renderer.run('state.summaries.length');
