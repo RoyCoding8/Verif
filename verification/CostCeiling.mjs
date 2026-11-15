@@ -17,6 +17,8 @@ export function stateKey(state) {
   return JSON.stringify(state);
 }
 
+import { explore as sharedExplore } from './explore.mjs';
+
 function edge(state, action, next, outcome = 'ok', details = {}) {
   return { from: state, action, to: next, outcome, ...details };
 }
@@ -138,21 +140,5 @@ export function ceilingInvariant(transition) {
 
 export function explore(cap, options = {}) {
   const initial = initialState(cap);
-  const states = new Map([[stateKey(initial), initial]]);
-  const paths = new Map([[stateKey(initial), []]]);
-  const edges = [];
-  const queue = [initial];
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const state = queue[cursor];
-    for (const next of transitions(state, options)) {
-      edges.push(next);
-      const key = stateKey(next.to);
-      if (!states.has(key)) {
-        states.set(key, next.to);
-        paths.set(key, [...paths.get(stateKey(state)), next]);
-        queue.push(next.to);
-      }
-    }
-  }
-  return { states: [...states.values()], paths, edges };
+  return sharedExplore(initial, (state) => transitions(state, options), stateKey);
 }

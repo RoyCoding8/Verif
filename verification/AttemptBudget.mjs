@@ -1,3 +1,5 @@
+import { explore as sharedExplore } from './explore.mjs';
+
 export const maximumClaims = 3;
 export const attemptSlots = Object.freeze(['a', 'b']);
 
@@ -127,22 +129,5 @@ export function authorizationInvariant(transition) {
 }
 
 export function explore(cap) {
-  const initial = initialState(cap);
-  const states = new Map([[stateKey(initial), initial]]);
-  const paths = new Map([[stateKey(initial), []]]);
-  const edges = [];
-  const queue = [initial];
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const state = queue[cursor];
-    for (const next of transitions(state)) {
-      edges.push(next);
-      const key = stateKey(next.to);
-      if (!states.has(key)) {
-        states.set(key, next.to);
-        paths.set(key, [...paths.get(stateKey(state)), next]);
-        queue.push(next.to);
-      }
-    }
-  }
-  return { states: [...states.values()], paths, edges };
+  return sharedExplore(initialState(cap), (state) => transitions(state), stateKey);
 }

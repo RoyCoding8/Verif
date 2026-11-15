@@ -1,3 +1,5 @@
+import { explore as sharedExplore } from './explore.mjs';
+
 const Old = 'old';
 const Next = 'next';
 const Other = 'other';
@@ -72,23 +74,7 @@ export function promotionInvariant(edgeValue) {
 }
 
 export function explore() {
-  const states = new Map([[stateKey(initialState), initialState]]);
-  const paths = new Map([[stateKey(initialState), []]]);
-  const edges = [];
-  const queue = [initialState];
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const state = queue[cursor];
-    for (const next of transitions(state)) {
-      edges.push(next);
-      const key = stateKey(next.to);
-      if (!states.has(key)) {
-        states.set(key, next.to);
-        paths.set(key, [...paths.get(stateKey(state)), next]);
-        queue.push(next.to);
-      }
-    }
-  }
-  return { states: [...states.values()], paths, edges };
+  return sharedExplore(initialState, (state) => transitions(state), stateKey);
 }
 
 export const values = Object.freeze({ Old, Next, Other });
