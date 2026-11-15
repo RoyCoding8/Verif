@@ -39,10 +39,25 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     for (const klass of ['sidebar', 'transcript', 'composer', 'context']) {
       assert.match(html, new RegExp(`class="[^"]*\\b${klass}\\b`), `index.html contains .${klass}`);
     }
-    for (const anchor of ['id="settings-btn"', 'id="settings-dialog"', 'id="theme-light"', 'id="theme-dark"', 'id="theme-system"', 'id="file-view"', 'id="file-close"', 'id="route-label"', 'id="nav-toggle"', 'id="inspector-toggle"']) {
+    for (const anchor of ['id="settings-btn"', 'id="settings-dialog"', 'id="theme-light"', 'id="theme-dark"', 'id="theme-system"', 'id="file-view"', 'id="file-close"', 'id="route-label"', 'id="nav-toggle"', 'id="inspector-toggle"', 'id="ctx-details"']) {
       assert.ok(html.includes(anchor), `index.html contains ${anchor}`);
     }
-    assert.ok(html.includes('href="style.css"'), 'index.html links style.css');
+    // Three-pane shell: the file viewer lives inside the right inspector
+    // rail so opening a file replaces inspector content instead of adding
+    // a fourth column next to chat.
+    const contextIndex = html.indexOf('id="context"');
+    const fileIndex = html.indexOf('id="file-view"');
+    const detailsIndex = html.indexOf('id="ctx-details"');
+    const asideClose = html.indexOf('</aside>', contextIndex);
+    assert.ok(contextIndex !== -1 && fileIndex > contextIndex && fileIndex < asideClose,
+      'file-view is nested inside the inspector aside');
+    assert.ok(detailsIndex > contextIndex && detailsIndex < fileIndex,
+      'inspector details precede the file view inside the rail');
+    assert.ok(!html.includes('id="ctx-title"'), 'inspector does not repeat the thread title');
+    assert.ok(html.includes('rows="1"'), 'composer textarea is one row tall');
+    assert.ok(html.includes('aria-label="Task"') && html.includes('aria-label="Mode"'),
+      'composer selects keep accessible names without visible labels');
+    assert.ok(html.includes('href="style.css"'), 'index.html links style.css')
     assert.ok(html.includes('src="app.js"'), 'index.html links app.js');
   });
 });

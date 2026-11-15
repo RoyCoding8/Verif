@@ -363,7 +363,6 @@ function renderThreadHead() {
 
 function renderContext() {
   const thread = currentThread();
-  $('ctx-title').textContent = thread ? (thread.title || 'Untitled') : 'No thread selected';
 
   const rows = $('ctx-rows');
   rows.textContent = '';
@@ -434,8 +433,11 @@ function renderFiles() {
   $('file-form').querySelector('button').disabled = !thread;
 
   const view = $('file-view');
+  const details = $('ctx-details');
   const name = $('file-name');
   const content = $('file-content');
+  details.hidden = Boolean(state.files.path && thread);
+  $('app').classList.toggle('file-open', Boolean(state.files.path && thread));
   if (!state.files.path || !thread) {
     view.hidden = true;
     name.textContent = '';
@@ -562,7 +564,13 @@ function bindUi() {
   });
   if (typeof document.addEventListener === 'function') {
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') closePanes();
+      if (event.key !== 'Escape') return;
+      if (state.files.path) {
+        state.files.path = null;
+        renderFiles();
+        return;
+      }
+      closePanes();
     });
   }
 }

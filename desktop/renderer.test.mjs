@@ -222,3 +222,19 @@ test('a valid run opens the thread with messages and results, and files report e
   await renderer.run(`(async () => { openFile("no-such-file.mjs"); })()`);
   await until(() => rendererText(renderer, 'file-content').includes('not found'), 5000, 'file 404 message');
 });
+test('opening a file swaps the inspector rail to the file view, and Back returns to details', async () => {
+  const renderer = await bootedRenderer();
+  renderer.registry.get('goal').value = 'Reserve the demo room for the walkthrough';
+  renderer.registry.get('send').click();
+  await until(() => renderer.run('state.summaries.length') === 1, 30000, 'thread creation');
+  const id = renderer.run('state.summaries[0].id');
+  await renderer.run(`(async () => { await openThread(${JSON.stringify(id)}); })()`);
+  await renderer.run('openFile("reserve.mjs")');
+  assert.equal(renderer.registry.get('file-view').hidden, false, 'the file view is the rail content');
+  assert.equal(renderer.registry.get('ctx-details').hidden, true, 'details hide while a file is open');
+  assert.ok(renderer.run('document.getElementById("app").classList'), 'app class hook exists');
+  await renderer.run('openFile(null)');
+  assert.equal(renderer.registry.get('ctx-details').hidden, false, 'details return when the file closes');
+  assert.equal(renderer.registry.get('file-view').hidden, true, 'the file view hides on close');
+});
+

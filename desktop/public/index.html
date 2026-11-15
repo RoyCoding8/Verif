@@ -70,17 +70,17 @@
         </div>
         <footer class="composer">
           <div class="composer-field">
-            <label for="goal">Goal</label>
-            <textarea id="goal" rows="2" placeholder="Describe the task"></textarea>
+            <label class="visually-hidden" for="goal">Goal</label>
+            <textarea id="goal" rows="1" placeholder="Describe the task"></textarea>
           </div>
           <div class="composer-row">
             <div class="field">
-              <label for="task">Task</label>
-              <select id="task"></select>
+              <label class="visually-hidden" for="task">Task</label>
+              <select id="task" aria-label="Task"></select>
             </div>
             <div class="field field-mode">
-              <label for="mode">Mode</label>
-              <select id="mode">
+              <label class="visually-hidden" for="mode">Mode</label>
+              <select id="mode" aria-label="Mode">
                 <option value="fixture">Fixture</option>
                 <option value="pi">Pi</option>
               </select>
@@ -95,21 +95,14 @@
         </footer>
       </section>
 
-      <section class="file-view" id="file-view" hidden aria-label="File">
-        <header class="file-head">
-          <span class="mono file-name" id="file-name"></span>
-          <button class="icon-btn" id="file-close" type="button" aria-label="Close file">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          </button>
-        </header>
-        <pre class="file-content" id="file-content" tabindex="0"></pre>
       </section>
     </main>
 
     <aside class="context" id="context" aria-label="Inspector">
+      <div class="ctx-details" id="ctx-details">
       <div class="ctx-inner">
         <section class="ctx-section">
-          <h2 class="ctx-heading" id="ctx-title">No thread selected</h2>
+          <h2 class="ctx-heading">Details</h2>
           <div class="ctx-rows" id="ctx-rows"></div>
         </section>
 
@@ -128,6 +121,18 @@
           </form>
         </section>
       </div>
+      </div>
+
+      <section class="file-view" id="file-view" hidden aria-label="File">
+        <header class="file-head">
+          <button class="btn-quiet file-back" id="file-close" type="button" aria-label="Back to details">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M20 12H5M11 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Back
+          </button>
+          <span class="mono file-name" id="file-name"></span>
+        </header>
+        <pre class="file-content" id="file-content" tabindex="0"></pre>
+      </section>
     </aside>
   </div>
 
