@@ -53,7 +53,7 @@ jobs:
             grep -Fx "'VerityDelegation.$theorem' does not depend on any axioms" "$RUNNER_TEMP/delegation-axioms.txt"
           done
           lake env lean -DwarningAsError=true AttemptBudgetLawAudit.lean > "$RUNNER_TEMP/attempt-budget-axioms.txt"
-          for theorem in executeSafe executeSpentMonotone executePreservesCap grantProgress staleGrantRefused queuedGrantRefused exhaustedGrantRefused clearDoesNotSpend requeueDoesNotSpend; do
+          for theorem in executeSafe stepSafe initialSafe executeSpentMonotone stepSpentMonotone grantProgress grantRefused staleGrantRefused queuedGrantRefused exhaustedGrantRefused startDoesNotSpend clearDoesNotSpend requeueDoesNotSpend clearPreservesCap requeuePreservesCap stepPreservesCap executePreservesCap; do
             grep -Fx "'VerityAttemptBudget.$theorem' does not depend on any axioms" "$RUNNER_TEMP/attempt-budget-axioms.txt"
           done
           lake env lean -DwarningAsError=true PromotionLawAudit.lean > "$RUNNER_TEMP/promotion-axioms.txt"
@@ -67,6 +67,13 @@ jobs:
           done
           for theorem in acceptedCompleteHistory rejectedRealTimeViolation acceptedImpliesConstructiveExecution; do
             grep -Fx "'VerityHistoryAudit.$theorem' depends on axioms: [propext, Classical.choice, Quot.sound]" "$RUNNER_TEMP/history-axioms.txt"
+          done
+          lake env lean -DwarningAsError=true NodeDifferential.lean > "$RUNNER_TEMP/node-differential-axioms.txt"
+          for theorem in acceptance_preserves_observations acceptance_binds_snapshots_recipe_and_oracle refactorAccepted staleBaselineRejected staleCandidateManifestRejected staleOracleRejected incompleteInventoryRejected explicitFalsePositiveRejected; do
+            grep -Fx "'VerityNodeDifferential.$theorem' does not depend on any axioms" "$RUNNER_TEMP/node-differential-axioms.txt"
+          done
+          for theorem in acceptedCheck_correct refactorAcceptedAsProp; do
+            grep -Fx "'VerityNodeDifferential.$theorem' depends on axioms: [propext, Quot.sound]" "$RUNNER_TEMP/node-differential-axioms.txt"
           done
         working-directory: verification/lean-refinement
       - name: Check generated witnesses with the pinned Lake Comparator

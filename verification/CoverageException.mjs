@@ -79,7 +79,6 @@ export function runCoverageExceptionModel() {
 
   let accepted = 0;
   let rejected = 0;
-  let invalid = 0;
   let weakeningCounterexample = null;
   for (const [state, criteria] of variants.entries()) {
     const proposal = structuredClone(parent);
