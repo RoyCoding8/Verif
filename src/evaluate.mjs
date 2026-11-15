@@ -33,6 +33,19 @@ async function captureHistory(factory, args, phases) {
   return history;
 }
 
+function observedOutput(output, label) {
+  try {
+    return jsonOutput(output, label);
+  } catch {
+    const kind = typeof output === 'function' ? 'function'
+      : typeof output === 'bigint' ? 'bigint'
+      : typeof output === 'symbol' ? 'symbol'
+      : typeof output === 'number' ? (Number.isNaN(output) ? 'nan' : 'infinity')
+      : typeof output === 'undefined' ? 'undefined' : 'composite';
+    return { unrepresentable: kind };
+  }
+}
+
 const [workspace, request, mode] = process.argv.slice(2);
 const strictJson = mode === '--strict-json';
 const cases = JSON.parse(await readFile(request, 'utf8'));
@@ -41,6 +54,10 @@ for (const { id, module, name, args, calls } of cases) {
   const exports = await import(pathToFileURL(join(workspace, module)));
   if (typeof exports[name] !== 'function') throw new Error('Required export is missing: ' + name);
   const output = calls ? await captureHistory(exports[name], args, calls) : await exports[name](...args);
-  observations.push({ id, actual: strictJson && !calls ? jsonOutput(output, name) : output });
+  // A subject result that JSON serialization loses (undefined, NaN, a function,
+  // a wrapper object) is reported as an explicit marker instead of being
+  // silently dropped, so it can never compare equal to an approved expectation.
+  const actual = calls ? output : strictJson ? jsonOutput(output, name) : observedOutput(output, name);
+  observations.push({ id, actual });
 }
 process.stdout.write(JSON.stringify(observations));

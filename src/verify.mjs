@@ -288,7 +288,7 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
     let overlap = false;
     const observed = raw.observations.map((item, index) => {
       requireThat(item && item.id === cases[index].id && Object.hasOwn(item, 'actual') && item.actual !== undefined,
-        'Wrong cached observation for ' + obligation.id);
+        'Invalid observation for ' + obligation.id);
       if (!history) return { id: item.id, status: digest(item.actual) === digest(cases[index].expected) ? 'PASS' : 'FAIL' };
       const verdict = historyVerdict(prepared.machine, cases[index], item.actual, deadline);
       overlap ||= verdict.overlapping;
