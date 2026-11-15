@@ -68,6 +68,15 @@ async function postJson(base, path, body) {
   return { status: response.status, body: await response.json() };
 }
 
+async function postRaw(base, body) {
+  const response = await fetch(base + '/api/threads', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body,
+  });
+  return { status: response.status, body: await response.json() };
+}
+
 async function waitForThread(base, id, predicate, what = 'condition', timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let last;
@@ -328,5 +337,53 @@ describe('backend restart', () => {
     const { status, body } = await getJson(second.base, '/api/tasks');
     assert.equal(status, 200);
     assert.deepEqual(body.tasks.map(task => task.id), taskIds);
+  });
+});
+
+describe('malformed and invalid thread requests', () => {
+  const dataDir = freshDataDir();
+  let backend;
+  before(async () => { backend = await startBackend(dataDir); });
+  after(async () => { await backend.stop(); });
+
+  test('malformed JSON returns 400, the server stays alive, and no thread is created', async () => {
+    const beforeState = await getJson(backend.base, '/api/state');
+    assert.equal(beforeState.status, 200);
+    const rejected = await postRaw(backend.base, '{');
+    assert.equal(rejected.status, 400);
+    assert.equal(typeof rejected.body.error, 'string');
+    // Liveness: the backend still answers after the malformed body.
+    const afterState = await getJson(backend.base, '/api/state');
+    assert.equal(afterState.status, 200);
+    assert.equal(afterState.body.threads.length, beforeState.body.threads.length);
+  });
+
+  test('each invalid request shape returns 400 without creating a thread', async () => {
+    const invalid = [
+      ['array body', '[]'],
+      ['null body', 'null'],
+      ['non-string goal', JSON.stringify({ goal: 42 })],
+      ['non-string taskId', JSON.stringify({ taskId: 42 })],
+      ['unknown taskId', JSON.stringify({ goal: 'unknown task audit', taskId: 'does-not-exist', mode: 'fixture' })],
+      ['unsupported mode', JSON.stringify({ goal: 'unsupported mode', mode: 'bogus' })],
+    ];
+    for (const [name, body] of invalid) {
+      const rejected = await postRaw(backend.base, body);
+      assert.equal(rejected.status, 400, `${name}: expected 400`);
+      assert.equal(typeof rejected.body.error, 'string', `${name}: expected an error message`);
+    }
+    const state = await getJson(backend.base, '/api/state');
+    assert.equal(state.status, 200);
+    assert.deepEqual(state.body.threads, []);
+  });
+
+  test('a later valid request works and an empty-object request uses the defaults', async () => {
+    const created = await postJson(backend.base, '/api/threads', {});
+    assert.equal(created.status, 201);
+    assert.equal(created.body.title, 'New task');
+    assert.equal(created.body.taskId, 'messages');
+    assert.equal(created.body.mode, 'fixture');
+    const thread = await waitForThread(backend.base, created.body.id, terminal, 'default run to finish');
+    assert.equal(thread.status, 'done');
   });
 });

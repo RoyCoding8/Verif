@@ -217,13 +217,23 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-function readBody(request) {
-  return new Promise((resolveBody, reject) => {
-    let data = '';
-    request.on('data', chunk => { data += chunk; });
-    request.on('end', () => resolveBody(data ? JSON.parse(data) : {}));
-    request.on('error', reject);
-  });
+async function readBody(request) {
+  let data = '';
+  for await (const chunk of request) data += chunk;
+  return data ? JSON.parse(data) : {};
+}
+
+// Validated once at the HTTP boundary: after this the parsed request is
+// trusted, so run dispatch needs no re-checks.
+function invalidThreadRequest(payload) {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return 'request body must be a JSON object';
+  }
+  const { goal, taskId, mode } = payload;
+  if (goal !== undefined && typeof goal !== 'string') return 'goal must be a string';
+  if (taskId !== undefined && typeof taskId !== 'string') return 'taskId must be a string';
+  if (mode !== undefined && mode !== 'fixture' && mode !== 'pi') return 'mode must be fixture or pi';
+  return null;
 }
 
 const mime = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
@@ -266,7 +276,22 @@ async function handle(request, response) {
   }
 
   if (path === '/api/threads' && request.method === 'POST') {
-    const { goal, taskId, mode } = await readBody(request);
+    let payload;
+    try {
+      payload = await readBody(request);
+    } catch {
+      return json(response, 400, { error: 'invalid JSON' });
+    }
+    const shapeError = invalidThreadRequest(payload);
+    if (shapeError) return json(response, 400, { error: shapeError });
+    if (payload.taskId !== undefined) {
+      catalogPromise ??= taskCatalog();
+      const settings = await catalogPromise;
+      if (!settings.tasks.some(task => task.id === payload.taskId)) {
+        return json(response, 400, { error: 'unknown taskId' });
+      }
+    }
+    const { goal, taskId, mode } = payload;
     const id = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
     const thread = {
       id,
