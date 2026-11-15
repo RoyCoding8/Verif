@@ -5,6 +5,7 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync } from 'node:fs';
+import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,6 +76,33 @@ async function postRaw(base, body) {
     body,
   });
   return { status: response.status, body: await response.json() };
+}
+
+// POSTs the same bytes as two transport writes: a no-delay socket, the
+// first write, and the second write after an event-loop turn and a short
+// delay, so the server reads them as separate data events.
+function postSplitBody(base, body, splitAt) {
+  const url = new URL(base);
+  return new Promise((resolvePost, reject) => {
+    const request = http.request({
+      hostname: url.hostname, port: url.port, path: '/api/threads', method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': body.length },
+    }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolvePost({
+        status: response.statusCode,
+        body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+      }));
+    });
+    request.on('error', reject);
+    request.on('socket', socket => socket.setNoDelay(true));
+    request.write(body.subarray(0, splitAt));
+    setImmediate(() => setTimeout(() => {
+      request.write(body.subarray(splitAt));
+      request.end();
+    }, 50));
+  });
 }
 
 async function waitForThread(base, id, predicate, what = 'condition', timeoutMs = 60_000) {
@@ -385,5 +413,24 @@ describe('malformed and invalid thread requests', () => {
     assert.equal(created.body.mode, 'fixture');
     const thread = await waitForThread(backend.base, created.body.id, terminal, 'default run to finish');
     assert.equal(thread.status, 'done');
+  });
+});
+
+describe('split utf8 request body', () => {
+  const dataDir = freshDataDir();
+  let backend;
+  before(async () => { backend = await startBackend(dataDir); });
+  after(async () => { await backend.stop(); });
+
+  test('a multi-byte goal split across transport writes survives intact', async () => {
+    const goal = 'Split goal: caf\u00e9 \u{1F642} ok.';
+    const body = Buffer.from(JSON.stringify({ goal }), 'utf8');
+    const splitAt = body.indexOf(Buffer.from('\u{1F642}', 'utf8')) + 2;
+    assert.ok(splitAt > 2, 'split point must fall inside the multi-byte character');
+    const created = await postSplitBody(backend.base, body, splitAt);
+    assert.equal(created.status, 201);
+    assert.equal(created.body.title, goal);
+    const thread = await getJson(backend.base, `/api/threads/${created.body.id}`);
+    assert.equal(thread.body.messages[0].text, goal);
   });
 });

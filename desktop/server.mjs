@@ -218,6 +218,7 @@ function json(response, status, body) {
 }
 
 async function readBody(request) {
+  request.setEncoding('utf8');
   let data = '';
   for await (const chunk of request) data += chunk;
   return data ? JSON.parse(data) : {};
