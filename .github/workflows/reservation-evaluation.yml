@@ -6,7 +6,7 @@ on:
       provider:
         description: Pi provider
         type: choice
-        options: [google, openrouter]
+        options: [openrouter]
         required: true
       model:
         description: Exact Pi model ID
@@ -23,7 +23,6 @@ permissions:
 
 jobs:
   evaluate:
-    if: github.event_name == 'workflow_dispatch' || (github.event.deleted == false && vars.VERITY_EVAL_MODEL != '')
     runs-on: ubuntu-latest
     timeout-minutes: 95
     steps:
@@ -43,16 +42,14 @@ jobs:
           TRIAL_MODEL: ${{ inputs.model || vars.VERITY_EVAL_MODEL }}
           TRIAL_COUNT: ${{ inputs.trials || vars.VERITY_EVAL_TRIALS || '2' }}
           VERITY_COST_CEILING_USD: ${{ vars.VERITY_EVAL_COST_CEILING_USD }}
-          GEMINI_API_KEY: ${{ (inputs.provider || vars.VERITY_EVAL_PROVIDER) == 'google' && secrets.GEMINI_API_KEY || '' }}
           OPENROUTER_API_KEY: ${{ (inputs.provider || vars.VERITY_EVAL_PROVIDER) == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
         shell: bash
         run: |
           set -euo pipefail
           test -n "$VERITY_COST_CEILING_USD" || { echo 'Missing VERITY_EVAL_COST_CEILING_USD (approved dollar ceiling)'; exit 1; }
           case "$TRIAL_PROVIDER" in
-            google) test -n "$GEMINI_API_KEY" || { echo 'Missing GEMINI_API_KEY'; exit 1; } ;;
             openrouter) test -n "$OPENROUTER_API_KEY" || { echo 'Missing OPENROUTER_API_KEY'; exit 1; } ;;
-            *) echo 'Select google or openrouter as the evaluation provider'; exit 1 ;;
+            *) echo 'Select openrouter as the evaluation provider'; exit 1 ;;
           esac
           node evaluation/cost-admission.mjs --check "$TRIAL_PROVIDER" "$TRIAL_MODEL"
           node evaluation/reservation.mjs --live "$TRIAL_PROVIDER" "$TRIAL_MODEL" "$TRIAL_COUNT"

@@ -2,7 +2,7 @@ name: Check promotion model
 
 on:
   push:
-    branches: [main, "ci/**"]
+    branches: [main, "ci/**", "wt/**"]
   pull_request:
 
 permissions:

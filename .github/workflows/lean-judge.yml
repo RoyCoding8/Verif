@@ -2,7 +2,7 @@ name: Verify Lean proof judge
 
 on:
   push:
-    branches: [main, "ci/**"]
+    branches: [main, "ci/**", "wt/**"]
   pull_request:
 
 permissions:
