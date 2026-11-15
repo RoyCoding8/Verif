@@ -1,8 +1,6 @@
 name: Evaluate Pi reservation changes
 
 on:
-  push:
-    branches: [ci/verity-live-evaluation]
   workflow_dispatch:
     inputs:
       provider:

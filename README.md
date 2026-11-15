@@ -15,7 +15,7 @@ The example starts two independent reservation tasks and schedules the API task 
 
 The `Evaluate Pi reservation changes` workflow runs paired normal and adversarial prompts under the same Pi model and wall-time budget. Its shadow suite checks contextual decline wording and preservation of other statuses. Set `GEMINI_API_KEY` or `OPENROUTER_API_KEY` in GitHub Actions for the selected provider.
 
-To run the evaluation from a temporary branch, set Actions variables `VERITY_EVAL_PROVIDER` (`google` or `openrouter`) and `VERITY_EVAL_MODEL` (exact Pi model ID), then push the evaluation revision to `ci/verity-live-evaluation`. Set `VERITY_EVAL_TRIALS` to override the default of two pairs per challenge. The workflow also accepts manual inputs when registered on the default branch.
+To run the evaluation, set Actions variables `VERITY_EVAL_PROVIDER` (`google` or `openrouter`) and `VERITY_EVAL_MODEL` (exact Pi model ID), then start the workflow by hand from the Actions tab. Set `VERITY_EVAL_TRIALS` to override the default of two pairs per challenge. The workflow also accepts manual inputs.
 
 ## Run an approved plan
 

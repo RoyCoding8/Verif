@@ -25,13 +25,14 @@ and is the source of truth for design questions. The implementation target is
 
 ## CI and branches
 
-- `main` is untouched by implementation work. Work lands on
-  `ci/verity-implementation`; the opt-in live evaluation runs on
-  `ci/verity-live-evaluation`.
-- Heavy checks run on temporary GitHub Actions branches (`ci/**`, `wt/**`
-  trigger the workflows). Integrate only after the checks pass on the exact
-  revision, confirm the workflows on the integrated commit, then remove
-  finished worktrees and obsolete branches (local and remote).
+- `main` is the only permanent branch and the integration target. Work lands
+  on `main`; the opt-in live evaluation is dispatched manually (it refuses to
+  start without `VERITY_EVAL_COST_CEILING_USD`).
+- Heavy checks run on transient worktree branches (`ci/**`, `wt/**` trigger
+  the workflows) and on `main` pushes. Integrate only after the checks pass on
+  the exact revision, confirm the workflows on the integrated commit, then
+  remove the worktree and its branch (local and remote). No branch outlives
+  the merge; `main` stays the sole permanent ref.
 - Paid or live runs require a recheck of the hosted configuration first:
   Actions secrets and variables, provider credentials with a spending cap,
   and an approved dollar ceiling. Live evaluation refuses to start without
