@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
-import { join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { assertExhaustiveDomain, compose, digest, evidenceKeys, evidenceSubject, hash, leanModuleDigests, maxApprovedInput, parseLeanOracle, readApprovedFile, requireThat, safePath, text, within } from './contracts.mjs';
+import { assertExhaustiveDomain, compose, digest, evidenceKeys, evidenceSubject, hash, leanModuleDigests, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
 import { judgeLean, leanEnvironment } from './lean-judge.mjs';
 import { leanClaimChallenge, readLeanDefinitions } from './lean-claim.mjs';
 import { proofSources } from './proof-dependencies.mjs';
@@ -12,6 +12,7 @@ import { classifyKaniReport, kaniHarness, kaniJudgePin, parseKaniOracle, runKani
 import { checkMutationRun, parseMutationOracle } from './node-mutation.mjs';
 
 const execute = promisify(execFile);
+const maxArtifactSize = 2 * 1024 * 1024;
 const evaluator = await readFile(new URL('./evaluate.mjs', import.meta.url));
 const environment = { runtime: process.version, platform: process.platform, arch: process.arch, adapter: hash(evaluator) };
 const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './contracts.mjs', './git.mjs'].map(async path =>
@@ -63,9 +64,13 @@ function restrictManifest(manifest, inputPaths) {
   return { tree: manifest.tree, files };
 }
 
-async function regularFile(root, name, limit = maxApprovedInput) {
-  return readApprovedFile(root, name, limit, { escapeLabel: 'File resolves outside its declared path: ' + name,
-    sizeLabel: 'Invalid or oversized file: ' + name });
+async function regularFile(root, name, limit = maxArtifactSize) {
+  const file = join(root, name);
+  const actual = relative(await realpath(root), await realpath(file));
+  requireThat(actual === name.split('/').join(sep) && !isAbsolute(actual), 'File resolves outside its declared path: ' + name);
+  const stats = await lstat(file);
+  requireThat(stats.isFile() && stats.size <= limit, 'Invalid or oversized file: ' + name);
+  return readFile(file);
 }
 
 async function assertMaterialization(root, manifest) {
@@ -236,7 +241,7 @@ async function evaluateNode({ inputs, obligation, workspace, signal, temp, runNa
     '--permission', ...[realWorkspace, realEvaluatorFile, realRequest].map(path => '--allow-fs-read=' + path),
     realEvaluatorFile, realWorkspace, realRequest, ...(strictJson ? ['--strict-json'] : []),
   ], {
-    cwd: realWorkspace, env, timeout: executionTimeout, signal, killSignal: 'SIGKILL', maxBuffer: maxApprovedInput, windowsHide: true,
+    cwd: realWorkspace, env, timeout: executionTimeout, signal, killSignal: 'SIGKILL', maxBuffer: maxArtifactSize, windowsHide: true,
   });
   const observations = JSON.parse(stdout);
   requireThat(Array.isArray(observations) && observations.length === inputs.length, 'Incomplete observations for ' + obligation.id);

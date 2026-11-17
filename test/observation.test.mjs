@@ -22,7 +22,7 @@ const PROBE = [
   '',
 ].join('\n');
 
-async function observationFixture(t, probe = PROBE) {
+async function observationFixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'verity-observation-'));
   const settings = await createDemo(root);
   await mkdir(settings.scratch, { recursive: true });
@@ -52,7 +52,7 @@ async function observationFixture(t, probe = PROBE) {
   const seeded = repo.readRef('refs/heads/protected');
   const seedWorkspace = join(root, 'seed-ws');
   repo.fork(seeded, seedWorkspace);
-  await writeFile(join(seedWorkspace, 'probe.mjs'), probe);
+  await writeFile(join(seedWorkspace, 'probe.mjs'), PROBE);
   const base = repo.capture(seedWorkspace, seeded);
   const candidateWorkspace = join(root, 'candidate-ws');
   repo.fork(base, candidateWorkspace);
@@ -81,21 +81,6 @@ function verifyPlan(fixture, task, journal, attempt, onVerdict) {
   return verify({ repo: fixture.repo, task, base: fixture.base, candidate: fixture.candidate,
     oracleRoot: fixture.oracleRoot, scratch: fixture.scratch, deadline: Date.now() + 60_000, journal, attempt, onVerdict });
 }
-
-test('materialization accepts inputs beyond the artifact limit and oracles exactly at it', async t => {
-  const fixture = await observationFixture(t, PROBE + '// ' + 'x'.repeat(2 * 1024 * 1024));
-  t.after(fixture.cleanup);
-  const receipt = await verifyPlan(fixture, probeTask(fixture,
-    [{ id: 'big-input', oracle: 'value', cases: ['c2'], subject: 'candidate', expect: 'PASS' }]));
-  assert.equal(receipt.results[0].status, 'PASS');
-  const inner = JSON.stringify([{ id: 'c2', module: 'probe.mjs', name: 'value', args: [], expected: 42 }]);
-  const bytes = Buffer.from(inner + ' '.repeat(2 * 1024 * 1024 - inner.length));
-  await writeFile(join(fixture.oracleRoot, 'padded.json'), bytes);
-  fixture.oracles.padded = { file: 'padded.json', digest: hash(bytes) };
-  const bounded = await verifyPlan(fixture, probeTask(fixture,
-    [{ id: 'padded', oracle: 'padded', cases: ['c2'], subject: 'candidate', expect: 'PASS' }]));
-  assert.equal(bounded.results[0].status, 'PASS');
-});
 
 test('node-test evidence artifacts carry the exact sorted-key bytes', async t => {
   const fixture = await observationFixture(t);

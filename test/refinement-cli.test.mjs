@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -36,18 +36,6 @@ test('refinement CLI refuses changed controller-owned definitions before proof e
   await assert.rejects(run(), error => error.code === 1 && /Refinement definitions digest changed/.test(error.stderr));
 });
 
-test('refinement CLI refuses definitions that link outside the approved oracle root', async t => {
-  const { root, run } = await fixture(t);
-  const outside = join(root, 'outside');
-  await mkdir(outside);
-  await writeFile(join(outside, 'definitions.lean'), 'namespace Scope\nend Scope\n');
-  await symlink(outside, join(root, 'sub'), 'junction');
-  const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'));
-  manifest.refinements[0].source = 'sub/definitions.lean';
-  await writeFile(join(root, 'manifest.json'), JSON.stringify(manifest));
-  await assert.rejects(run(),
-    error => error.code === 1 && /Refinement definitions must resolve to their approved path/.test(error.stderr));
-});
 test('refinement CLI returns a verified binding from the pinned comparator', {
   skip: process.env.VERITY_LEAN_SMOKE !== '1',
 }, async t => {

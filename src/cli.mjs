@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { approvedTask, digest, makeContract, maxApprovedInput, planVerification, readApprovedFile, requireThat, safePath } from './contracts.mjs';
+import { dirname, relative, resolve, sep } from 'node:path';
+import { approvedTask, digest, hash, makeContract, planVerification, requireThat, safePath } from './contracts.mjs';
 import { reviseApprovedTask } from './delegation-policy.mjs';
 import { GitRepo } from './git.mjs';
 import { Journal } from './journal.mjs';
@@ -49,10 +49,13 @@ async function checkRefinement(settings, entries, filename) {
   requireThat(matches.length === 1, 'Expected one approved refinement for ' + request.id);
   const { contract, approvedDigest, source, timeoutMs } = matches[0];
   requireThat(safePath(source) && source.endsWith('.lean'), 'Invalid approved Lean definitions path');
-  const bytes = await readApprovedFile(await realpath(settings.oracleRoot), source, maxApprovedInput,
-    { escapeLabel: 'Refinement definitions must resolve to their approved path',
-      sizeLabel: 'Invalid or oversized refinement definitions',
-      digest: contract?.definitionDigest, digestLabel: 'Refinement definitions digest changed' });
+  const root = await realpath(settings.oracleRoot);
+  const file = resolve(root, source);
+  requireThat(relative(root, await realpath(file)) === source.split('/').join(sep), 'Refinement definitions must resolve to their approved path');
+  const info = await lstat(file);
+  requireThat(info.isFile() && info.size <= 2 * 1024 * 1024, 'Invalid or oversized refinement definitions');
+  const bytes = await readFile(file);
+  requireThat(hash(bytes) === contract?.definitionDigest, 'Refinement definitions digest changed');
   const trustedDefinitions = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   const controller = new AbortController();
   const interrupt = () => controller.abort(new Error('Interrupted'));

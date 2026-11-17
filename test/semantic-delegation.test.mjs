@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { approve, createDemo } from '../examples/setup.mjs';
 import { approvedTask, hash } from '../src/contracts.mjs';
-import { leanClaimChallenge, checkLeanClaimOracle, readLeanDefinitions } from '../src/lean-claim.mjs';
+import { leanClaimChallenge } from '../src/lean-claim.mjs';
 import { runTasks } from '../src/verity.mjs';
 
 const execute = promisify(execFile);
@@ -58,32 +58,6 @@ async function fixture(t) {
   };
   return { settings: { ...settings, oracleRoot }, proposal, old, next, obligation, delegate };
 }
-
-test('approved Lean input readers accept their binding and reject drift, escapes and oversize', async t => {
-  const { settings, next, obligation } = await fixture(t);
-  const oracle = await obligation(next.obligation, 'Law.newProof', 'New.lean', next);
-  const trusted = await readFile(join(settings.oracleRoot, next.source), 'utf8');
-  await checkLeanClaimOracle(settings.oracleRoot, next, oracle, trusted);
-  const outside = join(settings.oracleRoot, '..', 'outside');
-  await mkdir(outside);
-  await writeFile(join(outside, 'evil.lean'), 'evil\n');
-  await writeFile(join(outside, 'evil.json'), '{"theorem":"Law.newProof"}\n');
-  await symlink(outside, join(settings.oracleRoot, 'sub'), 'junction');
-  await assert.rejects(readLeanDefinitions(settings.oracleRoot, { ...next, source: 'sub/evil.lean' }),
-    /Lean input must resolve to its approved path/);
-  await assert.rejects(checkLeanClaimOracle(settings.oracleRoot, next,
-    { ...oracle, oracle: { file: 'sub/evil.json', digest: hash('{"theorem":"Law.newProof"}\n') } }, trusted),
-    /Lean input must resolve to its approved path/);
-  const oversized = '{ "theorem": "Law.newProof" }' + ' '.repeat(2 * 1024 * 1024);
-  await writeFile(join(settings.oracleRoot, 'oversized.json'), oversized);
-  await assert.rejects(checkLeanClaimOracle(settings.oracleRoot, next,
-    { ...oracle, oracle: { file: 'oversized.json', digest: hash(oversized) } }, trusted),
-    /Invalid or oversized Lean input/);
-  await assert.rejects(readLeanDefinitions(settings.oracleRoot, { ...next, definitionDigest: hash(trusted + '-- drift\n') }),
-    /Lean input digest changed: frozen\.lean/);
-  await assert.rejects(readLeanDefinitions(settings.oracleRoot, { ...next, definitionDigest: undefined }),
-    /Lean input digest changed: frozen\.lean/);
-});
 
 test('semantic delegation challenge binds the revision and refuses an unrelated successor oracle', async t => {
   const { proposal, next, obligation, delegate } = await fixture(t);

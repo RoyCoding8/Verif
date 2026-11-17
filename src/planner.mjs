@@ -3,7 +3,7 @@ import { parseKaniOracle } from './kani-judge.mjs';
 import { parseMutationOracle } from './node-mutation.mjs';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
-import { digest, hash, leanModuleDigests, makeContract, maxApprovedInput, parseLeanOracle, planVerification, requireThat, safePath, text } from './contracts.mjs';
+import { digest, hash, leanModuleDigests, makeContract, parseLeanOracle, planVerification, requireThat, safePath, text } from './contracts.mjs';
 import { GitRepo } from './git.mjs';
 import { runPiWorker } from './pi-worker.mjs';
 import { expandSampledCases } from './sampled-cases.mjs';
@@ -18,7 +18,7 @@ async function catalogFor(root, files) {
     requireThat(file.endsWith('.json') && relative(canonicalRoot, await realpath(path)) === file.split('/').join(sep),
       'Oracle must resolve to its approved path: ' + file);
     const stats = await lstat(path);
-    requireThat(stats.isFile() && stats.size < maxApprovedInput, 'Invalid oracle file ' + file);
+    requireThat(stats.isFile() && stats.size < 2 * 1024 * 1024, 'Invalid oracle file ' + file);
     const bytes = await readFile(path);
     const records = JSON.parse(bytes.toString('utf8'));
     const identity = { file, digest: hash(bytes) };
