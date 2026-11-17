@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { assertExhaustiveDomain, compose, digest, evidenceKeys, evidenceSubject, hash, leanModuleDigests, parseLeanOracle, requireThat, safePath, text, within } from './contracts.mjs';
+import { assertExhaustiveDomain, compose, digest, evidenceKeys, evidenceSubject, hash, leanModuleDigests, maxApprovedInput, parseLeanOracle, readApprovedFile, requireThat, safePath, text, within } from './contracts.mjs';
 import { judgeLean, leanEnvironment } from './lean-judge.mjs';
 import { leanClaimChallenge, readLeanDefinitions } from './lean-claim.mjs';
 import { proofSources } from './proof-dependencies.mjs';
@@ -12,7 +12,6 @@ import { classifyKaniReport, kaniHarness, kaniJudgePin, parseKaniOracle, runKani
 import { checkMutationRun, parseMutationOracle } from './node-mutation.mjs';
 
 const execute = promisify(execFile);
-const maxArtifactSize = 2 * 1024 * 1024;
 const evaluator = await readFile(new URL('./evaluate.mjs', import.meta.url));
 const environment = { runtime: process.version, platform: process.platform, arch: process.arch, adapter: hash(evaluator) };
 const reuseAdapter = digest(await Promise.all(['./verify.mjs', './evaluate.mjs', './contracts.mjs', './git.mjs'].map(async path =>
@@ -64,13 +63,9 @@ function restrictManifest(manifest, inputPaths) {
   return { tree: manifest.tree, files };
 }
 
-async function regularFile(root, name, limit = maxArtifactSize) {
-  const file = join(root, name);
-  const actual = relative(await realpath(root), await realpath(file));
-  requireThat(actual === name.split('/').join(sep) && !isAbsolute(actual), 'File resolves outside its declared path: ' + name);
-  const stats = await lstat(file);
-  requireThat(stats.isFile() && stats.size <= limit, 'Invalid or oversized file: ' + name);
-  return readFile(file);
+async function regularFile(root, name, limit = maxApprovedInput) {
+  return readApprovedFile(root, name, limit, { escapeLabel: 'File resolves outside its declared path: ' + name,
+    sizeLabel: 'Invalid or oversized file: ' + name });
 }
 
 async function assertMaterialization(root, manifest) {
@@ -103,6 +98,13 @@ function stableJson(value) {
   const sort = item => Array.isArray(item) ? item.map(sort) : item && typeof item === 'object'
     ? Object.fromEntries(Object.keys(item).sort().map(key => [key, sort(item[key])])) : item;
   return JSON.stringify(sort(value));
+}
+
+function buildArtifacts(outputs, output) {
+  const contents = Buffer.from(stableJson(output));
+  const base64 = contents.toString('base64');
+  const artifacts = Object.fromEntries(outputs.map(path => [path, { digest: hash(contents), base64 }]));
+  return { artifacts, outputs: Object.fromEntries(outputs.map(path => [path, artifacts[path].digest])) };
 }
 
 export function subjectFor(obligation, base, candidate) {
@@ -166,18 +168,14 @@ async function runNodeDifferential({ repo, obligation, claim, base, candidate, m
     baseOutput: baseline.observations[index].actual, candidateOutput: current.observations[index].actual }));
   const cases = differentialCases(obligation, comparisons);
   const report = readReport({ cases }, obligation);
-  const output = { cases, comparisons };
-  const artifacts = Object.fromEntries(obligation.outputs.map(path => {
-    const contents = Buffer.from(stableJson(output));
-    return [path, { digest: hash(contents), base64: contents.toString('base64') }];
-  }));
+  const { artifacts, outputs } = buildArtifacts(obligation.outputs, { cases, comparisons });
   return { id: obligation.id, ...report, commit: candidate, manifest, level: 'tested',
     keys: evidenceKeys(obligation, claim, candidate, manifest, evidenceEnvironment(obligation), undefined,
       { commit: base, manifest: baseManifest }),
     differential: { base, manifest: baseManifest, comparisons },
     observation: { stdout: hash(stableJson([baseline.stdout, current.stdout])),
       stderr: hash(stableJson([baseline.stderr, current.stderr])), exit: 0 },
-    outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])), artifacts };
+    outputs, artifacts };
 }
 
 function historyInputs(oracle, obligation, claim, manifest, deadline) {
@@ -238,7 +236,7 @@ async function evaluateNode({ inputs, obligation, workspace, signal, temp, runNa
     '--permission', ...[realWorkspace, realEvaluatorFile, realRequest].map(path => '--allow-fs-read=' + path),
     realEvaluatorFile, realWorkspace, realRequest, ...(strictJson ? ['--strict-json'] : []),
   ], {
-    cwd: realWorkspace, env, timeout: executionTimeout, signal, killSignal: 'SIGKILL', maxBuffer: maxArtifactSize, windowsHide: true,
+    cwd: realWorkspace, env, timeout: executionTimeout, signal, killSignal: 'SIGKILL', maxBuffer: maxApprovedInput, windowsHide: true,
   });
   const observations = JSON.parse(stdout);
   requireThat(Array.isArray(observations) && observations.length === inputs.length, 'Incomplete observations for ' + obligation.id);
@@ -312,10 +310,7 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
   }
   const report = readReport({ cases: statuses }, obligation);
   if (prepared.mutation) output.mutants = prepared.mutation.results;
-  const artifacts = Object.fromEntries(obligation.outputs.map(path => {
-    const contents = Buffer.from(stableJson(output));
-    return [path, { digest: hash(contents), base64: contents.toString('base64') }];
-  }));
+  const { artifacts, outputs } = buildArtifacts(obligation.outputs, output);
   return {
     id: obligation.id, ...report, commit, manifest, level,
     keys: evidenceKeys(obligation, claim, commit, manifest, evidenceEnvironment(obligation), prepared.dependencies),
@@ -326,8 +321,7 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
     ...(prepared.mutation ? { mutation: prepared.mutation } : {}),
     ...(obligation.proofDependencies ? { proofDependencies: prepared.dependencies } : {}),
     observation: { stdout: hash(raw.stdout), stderr: hash(raw.stderr), exit: raw.exit },
-    outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])),
-    artifacts,
+    outputs, artifacts,
   };
 }
 

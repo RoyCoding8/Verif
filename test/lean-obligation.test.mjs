@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { join, resolve, dirname } from 'node:path';
 import { test } from 'node:test';
 import { approve, createDemo } from '../examples/setup.mjs';
 import { hash, leanModuleDigests, planVerification } from '../src/contracts.mjs';
@@ -34,6 +34,44 @@ async function fixture(t) {
   await writeFile(join(oracleRoot, 'proof.json'), bytes);
   return { ...settings, oracleRoot, tasks: [approve(intent)] };
 }
+
+test('approved input readers reject oversized oracle files at every reader', async t => {
+  const settings = await fixture(t);
+  const repo = new GitRepo(settings.repository);
+  const head = repo.readRef(policy.ref);
+  await writeFile(join(settings.oracleRoot, 'proof.json'), '{"theorem":"Warranty.addZero"}' + ' '.repeat(2 * 1024 * 1024));
+  const [oversized] = await runTasks({ ...settings, tasks: [approve({ ...intent, policy: { ...policy, maxRepairs: 0 } })],
+    worker: ({ workspace }) => writeFile(join(workspace, solution), statement + ' := by rfl\n') });
+  assert.equal(oversized.status, 'refused');
+  assert.match(JSON.stringify(oversized), /Invalid or oversized file: proof\.json/);
+  assert.equal(repo.readRef(policy.ref), head);
+  const draft = { ...intent, oracleFiles: ['proof.json'] };
+  await assert.rejects(proposeTask({ ...settings, draft, worker: async () => assert.fail('Rejected oracle dispatched a worker') }),
+    /Invalid oracle file proof\.json/);
+});
+
+test('planning refuses an oracle file exactly at its exclusive size limit', async t => {
+  const settings = await fixture(t);
+  await writeFile(join(settings.oracleRoot, 'proof.json'), Buffer.alloc(2 * 1024 * 1024, 0x20));
+  await assert.rejects(proposeTask({ ...settings, draft: { ...intent, oracleFiles: ['proof.json'] },
+    worker: async () => assert.fail('Rejected oracle dispatched a worker') }), /Invalid oracle file proof\.json/);
+});
+
+test('oracle readers refuse linked escapes outside the approved root', async t => {
+  const settings = await fixture(t);
+  const outside = join(dirname(settings.journalPath), 'outside');
+  await mkdir(outside);
+  await writeFile(join(outside, 'proof.json'), '{"theorem":"Warranty.addZero"}\n');
+  await symlink(outside, join(settings.oracleRoot, 'sub'), 'junction');
+  const escaped = { ...intent, obligations: [{ ...obligation, oracle: { file: 'sub/proof.json', digest: obligation.oracle.digest } }] };
+  const [refused] = await runTasks({ ...settings, tasks: [approve({ ...escaped, policy: { ...policy, maxRepairs: 0 } })],
+    worker: ({ workspace }) => writeFile(join(workspace, solution), statement + ' := by rfl\n') });
+  assert.equal(refused.status, 'refused');
+  assert.match(JSON.stringify(refused), /File resolves outside its declared path: sub\/proof\.json/);
+  await assert.rejects(proposeTask({ ...settings, draft: { ...intent, oracleFiles: ['sub/proof.json'] },
+    worker: async () => assert.fail('Escaped oracle dispatched a worker') }),
+    /Oracle must resolve to its approved path: sub\/proof\.json/);
+});
 
 test('Lean plans bind a single named theorem and proposals match the approved oracle format', async t => {
   assert.throws(() => planVerification({ ...intent, obligations: [{ ...obligation, cases: ['bad name'] }] }), /one named theorem/);

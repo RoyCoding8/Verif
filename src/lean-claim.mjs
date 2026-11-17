@@ -1,15 +1,8 @@
-import { lstat, readFile, realpath } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
-import { digest, hash, leanModuleDigests, parseLeanOracle, requireThat } from './contracts.mjs';
+import { digest, hash, leanModuleDigests, maxApprovedInput, parseLeanOracle, readApprovedFile, requireThat } from './contracts.mjs';
 
 async function readApproved(root, source, expected) {
-  const path = join(root, source);
-  requireThat(relative(await realpath(root), await realpath(path)) === source.split('/').join(sep),
-    'Lean input must resolve to its approved path');
-  const info = await lstat(path);
-  requireThat(info.isFile() && info.size <= 2 * 1024 * 1024, 'Invalid or oversized Lean input');
-  const bytes = await readFile(path);
-  requireThat(hash(bytes) === expected, 'Lean input digest changed: ' + source);
+  const bytes = await readApprovedFile(root, source, maxApprovedInput, { escapeLabel: 'Lean input must resolve to its approved path',
+    sizeLabel: 'Invalid or oversized Lean input', digest: expected, digestLabel: 'Lean input digest changed: ' + source });
   return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
 }
 

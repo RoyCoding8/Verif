@@ -334,7 +334,7 @@ export async function runPiWorker({ workspace, goal, scope, signal, runCheck, sd
     reload: async () => {},
   };
   let { model, modelRuntime } = options;
-  const { route, thinkingLevel, agentDir } = options;
+  const { route } = options;
   if (route) {
     if (model || modelRuntime) throw new Error("Pi route conflicts with a supplied model or runtime");
     modelRuntime = await pi.ModelRuntime.create({ allowModelNetwork: true, modelRefreshTimeoutMs: 20_000 });
@@ -372,10 +372,8 @@ export async function runPiWorker({ workspace, goal, scope, signal, runCheck, sd
   }
   const created = await pi.createAgentSession({
     cwd: root,
-    ...(agentDir ? { agentDir } : {}),
     ...(model ? { model } : {}),
     ...(modelRuntime ? { modelRuntime } : {}),
-    ...(thinkingLevel ? { thinkingLevel } : {}),
     tools: allowedTools,
     customTools: tools,
     resourceLoader,

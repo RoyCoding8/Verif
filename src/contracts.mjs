@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { lstat, readFile, realpath } from 'node:fs/promises';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { normalizeRequestBound } from './cost-ceiling.mjs';
 import { normalizeModelRoute } from './model-route.mjs';
 
@@ -8,6 +10,19 @@ const methods = new Map([['node-test', 'tested'], ['node-property', 'tested'], [
 
 export function requireThat(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+export const maxApprovedInput = 2 * 1024 * 1024;
+
+export async function readApprovedFile(root, name, limit, { digest: expected, digestLabel, escapeLabel, sizeLabel }) {
+  const path = join(root, name);
+  const actual = relative(await realpath(root), await realpath(path));
+  requireThat(actual === name.split('/').join(sep) && !isAbsolute(actual), escapeLabel);
+  const stats = await lstat(path);
+  requireThat(stats.isFile() && stats.size <= limit, sizeLabel);
+  const bytes = await readFile(path);
+  requireThat(expected === undefined || hash(bytes) === expected, digestLabel);
+  return bytes;
 }
 
 function canonical(value) {
