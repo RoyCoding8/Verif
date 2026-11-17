@@ -8,10 +8,14 @@
 // `electron desktop/main.mjs --smoke` runs the headless acceptance check:
 // load the page, wait for #app, assert the DOM anchors, print SMOKE OK.
 
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, safeStorage } from 'electron';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeKeyHandoffFile } from './keyhandoff.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const serverScript = join(here, 'server.mjs');
@@ -25,10 +29,23 @@ let backend = null;
 let backendExit = null;
 let quitting = false;
 
-function startBackend() {
+function startBackend(boot) {
   // Run the backend under plain Node even though the parent is Electron.
+  // Credential protection is delivered as exactly one consumed-on-read
+  // handoff file (see keyhandoff.mjs); nothing else traverses the channel.
+  const handoffFile = join(mkdtempSync(join(tmpdir(), 'verity-key-')), 'dek.handoff');
+  writeKeyHandoffFile(handoffFile, {
+    dek: boot.vaultKey.dek ? boot.vaultKey.dek.toString('hex') : null,
+    ...(boot.vaultKey.reason ? { reason: boot.vaultKey.reason } : {}),
+  });
   backend = spawn(process.execPath, [serverScript], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', VERITY_DESKTOP_PORT: String(port) },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      VERITY_DESKTOP_PORT: String(port),
+      ...boot.env,
+      VERITY_DESKTOP_KEY_HANDOFF_FILE: handoffFile,
+    },
     stdio: ['ignore', 'inherit', 'inherit'],
     windowsHide: true,
   });
@@ -129,8 +146,71 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   });
 }
 
+// Durable data lives under the OS user-data directory by default; an
+// explicit VERITY_DESKTOP_DATA keeps isolated tests and dev runs apart.
+// A pre-existing checkout .data is migrated conservatively: only into a
+// fresh destination, and never deleted or modified here.
+async function prepareBoot() {
+  const explicit = Boolean(process.env.VERITY_DESKTOP_DATA);
+  const dataDir = process.env.VERITY_DESKTOP_DATA ?? join(app.getPath('userData'), 'desktop-data');
+  const env = { VERITY_DESKTOP_DATA: dataDir };
+  if (!explicit) {
+    const legacyDir = join(here, '.data');
+    if (existsSync(join(legacyDir, 'threads.json')) && !existsSync(join(dataDir, 'threads.json'))) {
+      env.VERITY_DESKTOP_LEGACY_DATA = legacyDir;
+    }
+  }
+  return { env, vaultKey: await ensureVaultKey(dataDir) };
+}
+
+// Main owns OS-protected key material: a random data-encryption key wrapped
+// with safeStorage's supported async API at rest, unwrapped only here and
+// handed to the child once over the private pipe. An unwrappable key that
+// fails is rewrapped; prior settings survive and stored keys are re-entered
+// in Settings.
+async function ensureVaultKey(dataDir) {
+  mkdirSync(dataDir, { recursive: true });
+  const keyFile = join(dataDir, 'vault-key.json');
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
+    return { dek: null, reason: 'OS credential protection (safeStorage) is unavailable, so API keys cannot be stored in this installation.' };
+  }
+  const wrap = async dek => (await safeStorage.encryptStringAsync(dek.toString('hex'))).toString('base64');
+  let wrapped;
+  if (existsSync(keyFile)) {
+    try {
+      wrapped = JSON.parse(readFileSync(keyFile, 'utf8')).wrapped;
+    } catch {
+      wrapped = undefined;
+    }
+  }
+  let dek;
+  if (typeof wrapped === 'string') {
+    try {
+      const unwrapped = await safeStorage.decryptStringAsync(Buffer.from(wrapped, 'base64'));
+      if (/^[0-9a-f]{64}$/.test(unwrapped.result)) {
+        dek = Buffer.from(unwrapped.result, 'hex');
+        if (unwrapped.shouldReEncrypt) {
+          // The OS rotated its key; re-wrap so the next boot decrypts cleanly.
+          const temp = join(dataDir, `vault-key.json.${Date.now().toString(36)}.tmp`);
+          writeFileSync(temp, JSON.stringify({ wrapped: await wrap(dek) }));
+          renameSync(temp, keyFile);
+        }
+      }
+    } catch {
+      dek = undefined;
+    }
+  }
+  if (Buffer.isBuffer(dek) && dek.length === 32) return { dek };
+  dek = randomBytes(32);
+  const temp = join(dataDir, `vault-key.json.${Date.now().toString(36)}.tmp`);
+  writeFileSync(temp, JSON.stringify({ wrapped: await wrap(dek) }));
+  renameSync(temp, keyFile);
+  return { dek };
+}
+
 app.whenReady().then(async () => {
-  startBackend();
+  const boot = await prepareBoot();
+  startBackend(boot);
   try {
     await waitForState();
   } catch (error) {
