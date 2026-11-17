@@ -30,7 +30,27 @@ const DOTS = {
   attention: 'dot-attention',
 };
 
+// The three wire protocols the backend accepts, with the labels users see.
+const PROTOCOLS = {
+  'openai-completions': 'OpenAI Chat Completions',
+  'openai-responses': 'OpenAI Responses',
+  'anthropic-messages': 'Anthropic Messages',
+};
+
 const state = {
+  // Independent boot sections: each settles on its own so one failure never
+  // blanks the other two or gets mislabeled as a failed run.
+  boot: { state: 'pending', stateError: null, tasks: 'pending', tasksError: null },
+  settings: {
+    phase: 'pending', // pending | ok | error
+    error: null,
+    open: false,
+    tab: 'general',
+    data: { providers: [], defaultProviderId: null, costCeilingUsd: null, credentialStorage: { available: true } },
+    draft: null, // { providers, defaultProviderId } unsaved providers edits
+    dirty: false,
+    form: null, // provider entry being added/edited; apiKey lives only here transiently
+  },
   hostname: '',
   pi: { ready: false },
   summaries: [],
@@ -177,6 +197,111 @@ async function fetchTasks() {
   state.tasks = body.tasks ?? [];
 }
 
+// ---------- settings wire boundary ----------
+
+// GET /api/settings: { providers: ProviderView[], defaultProviderId,
+// costCeilingUsd, credentialStorage }. The backend never returns key
+// material; anything else is an interface mismatch we surface, not guess.
+async function fetchSettings() {
+  let response;
+  try {
+    response = await fetch('/api/settings');
+  } catch {
+    throw new Error('The Verity backend is not answering.');
+  }
+  if (response.status === 404) {
+    throw new Error('This backend does not serve /api/settings yet, so provider setup is unavailable.');
+  }
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? ('Request failed with HTTP ' + response.status));
+  state.settings.data = normalizeSettings(body);
+}
+
+function normalizeSettings(body) {
+  const protocols = Object.keys(PROTOCOLS);
+  const providers = (Array.isArray(body?.providers) ? body.providers : []).map(entry => {
+    if (!entry || typeof entry.id !== 'string' || typeof entry.label !== 'string') {
+      throw new Error('The backend sent a malformed provider entry.');
+    }
+    if (!protocols.includes(entry.protocol)) {
+      throw new Error(`The backend sent unknown protocol "${entry.protocol}" for provider ${entry.id}.`);
+    }
+    return {
+      id: entry.id,
+      label: entry.label,
+      protocol: entry.protocol,
+      baseUrl: String(entry.baseUrl ?? ''),
+      modelId: String(entry.modelId ?? ''),
+      hasApiKey: Boolean(entry.hasApiKey),
+    };
+  });
+  const ids = new Set(providers.map(provider => provider.id));
+  const defaultProviderId = body?.defaultProviderId != null && ids.has(body.defaultProviderId)
+    ? body.defaultProviderId
+    : null;
+  const ceiling = body?.costCeilingUsd;
+  if (ceiling != null && !(typeof ceiling === 'number' && Number.isFinite(ceiling) && ceiling > 0)) {
+    throw new Error('The backend sent an invalid spending ceiling.');
+  }
+  const credential = body?.credentialStorage ?? {};
+  return {
+    providers,
+    defaultProviderId,
+    costCeilingUsd: ceiling ?? null,
+    credentialStorage: { available: Boolean(credential.available), reason: credential.reason },
+  };
+}
+
+// One PUT path for both Settings saves: full-list replacement per contract.
+// Saved keys are never sent back; apiKey is included only when freshly typed.
+async function putSettings(payload, errorElementId) {
+  try {
+    const body = await fetchJson('/api/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    state.settings.data = normalizeSettings(body);
+    state.settings.draft = null;
+    state.settings.dirty = false;
+    state.settings.form = null;
+    state.settings.phase = 'ok';
+    clearProviderKeyInput();
+    await loadStateSection();
+    renderAll();
+    return true;
+  } catch (error) {
+    $(errorElementId).textContent = error.message ?? 'Saving settings failed.';
+    return false;
+  }
+}
+
+// Single source for the ceiling: blank means unconfigured (null), anything
+// else must be a finite positive number before paid runs may start.
+function readCeiling() {
+  const raw = $('ceiling-input').value.trim();
+  if (raw === '') return { value: null };
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return { error: 'The spending ceiling must be a positive number of US dollars, or blank to leave spending disabled.' };
+  }
+  return { value: parsed };
+}
+
+function providersToInput(providers) {
+  return providers.map(provider => {
+    const input = {
+      id: provider.id,
+      label: provider.label,
+      protocol: provider.protocol,
+      baseUrl: provider.baseUrl,
+      modelId: provider.modelId,
+    };
+    if (provider.apiKey) input.apiKey = provider.apiKey;
+    return input;
+  });
+}
+
 async function fetchThread(id) {
   const body = await fetchJson('/api/threads/' + encodeURIComponent(id));
   state.threads.set(id, body);
@@ -222,6 +347,8 @@ async function createThread() {
 }
 
 function pushLocalError(text) {
+  // Run failures only: startup section failures render in the boot notice so
+  // a dead backend or broken catalog is never mislabeled as an executed run.
   const thread = currentThread();
   if (thread) {
     thread.messages.push({ role: 'error', text, ts: Date.now() });
@@ -233,12 +360,86 @@ function pushLocalError(text) {
   wrap.appendChild(renderMessage({ role: 'error', text, ts: Date.now() }));
 }
 
+// ---------- boot sections ----------
+
+// Each boot section settles independently; a failure records its own error
+// and leaves the other sections usable.
+async function loadStateSection() {
+  try {
+    await fetchState();
+    state.boot.state = 'ok';
+    state.boot.stateError = null;
+  } catch (error) {
+    state.boot.state = 'error';
+    state.boot.stateError = error.message;
+  }
+}
+
+async function loadTasksSection() {
+  try {
+    await fetchTasks();
+    state.boot.tasks = 'ok';
+    state.boot.tasksError = null;
+  } catch (error) {
+    state.boot.tasks = 'error';
+    state.boot.tasksError = error.message;
+  }
+}
+
+async function loadSettingsSection() {
+  state.settings.phase = 'pending';
+  try {
+    await fetchSettings();
+    state.settings.phase = 'ok';
+    state.settings.error = null;
+  } catch (error) {
+    state.settings.phase = 'error';
+    state.settings.error = error.message;
+  }
+}
+
+function failedBootSections() {
+  const failed = [];
+  if (state.boot.state === 'error') {
+    failed.push(['The Verity backend is unreachable, so threads and run status are unavailable.', state.boot.stateError]);
+  }
+  if (state.boot.tasks === 'error') {
+    failed.push(['The task catalog failed to load, so the demo task list is unavailable.', state.boot.tasksError]);
+  }
+  return failed;
+}
+
+function renderBootNotice() {
+  const notice = $('boot-notice');
+  const failed = failedBootSections();
+  if (!failed.length) {
+    notice.hidden = true;
+    return;
+  }
+  notice.hidden = false;
+  $('boot-text').textContent = failed.map(entry => entry[0]).join(' ');
+  $('boot-detail').textContent = failed.map(entry => entry[1]).join(' | ');
+}
+
+async function retryFailedSections() {
+  const jobs = [];
+  if (state.boot.state === 'error') jobs.push(loadStateSection());
+  if (state.boot.tasks === 'error') jobs.push(loadTasksSection());
+  if (state.settings.phase === 'error') jobs.push(loadSettingsSection());
+  await Promise.all(jobs);
+  renderAll();
+}
+
 // ---------- rendering: shell chrome ----------
 
 function renderSidebar() {
   $('host').textContent = state.hostname || 'unknown host';
   const list = $('thread-list');
   list.textContent = '';
+  if (state.boot.state === 'error') {
+    list.appendChild(el('div', 'side-empty', 'Threads unavailable: the backend is unreachable.'));
+    return;
+  }
   if (!state.summaries.length) {
     list.appendChild(el('div', 'side-empty', 'No threads yet.'));
     return;
@@ -283,13 +484,47 @@ function renderComposer() {
   piOption.disabled = !state.pi.ready;
   piOption.title = state.pi.ready ? 'Runs the real Pi agent loop' : (state.pi.reason ?? 'Pi is not configured');
 
-  const piSelected = $('mode').value === 'pi';
-  const ready = piSelected ? state.pi.ready : true;
-  $('route-label').textContent = piSelected
-    ? (state.pi.ready ? 'Pi ready' : 'Pi unavailable')
-    : 'Demo ready';
-  $('route-dot').className = 'dot ' + (ready ? 'dot-done' : 'dot-queued');
+  const routeLabel = $('route-label');
+  if (state.boot.state === 'error') {
+    routeLabel.textContent = 'Backend unreachable';
+  } else if (state.boot.state === 'pending') {
+    routeLabel.textContent = 'Checking…';
+  } else {
+    const piSelected = $('mode').value === 'pi';
+    const ready = piSelected ? state.pi.ready : true;
+    routeLabel.textContent = piSelected
+      ? (state.pi.ready ? 'Pi ready' : 'Pi unavailable')
+      : 'Demo ready';
+    $('route-dot').className = 'dot ' + (ready ? 'dot-done' : 'dot-queued');
+  }
+  renderProviderStatus();
   renderModeNote();
+}
+
+// Composer status of the configured route, derived from /api/settings only.
+function renderProviderStatus() {
+  const status = $('provider-status');
+  const setup = $('provider-setup');
+  const settings = state.settings;
+  if (settings.phase === 'error') {
+    status.textContent = 'Provider settings unavailable';
+    setup.hidden = false;
+    return;
+  }
+  if (settings.phase !== 'ok') {
+    status.textContent = settings.phase === 'pending' ? 'Checking providers…' : '';
+    setup.hidden = true;
+    return;
+  }
+  const providers = settings.data.providers;
+  const def = providers.find(provider => provider.id === settings.data.defaultProviderId);
+  if (def) {
+    status.textContent = `${def.label} · ${def.modelId}`;
+    setup.hidden = true;
+  } else {
+    status.textContent = providers.length ? 'No default provider selected' : 'No provider configured';
+    setup.hidden = false;
+  }
 }
 
 function renderModeNote() {
@@ -499,6 +734,297 @@ function openFile(path) {
   renderAll();
 }
 
+// ---------- settings dialog ----------
+
+const SETTINGS_TABS = ['general', 'appearance', 'providers'];
+
+function copySettingsData() {
+  return JSON.parse(JSON.stringify({
+    providers: state.settings.data.providers,
+    defaultProviderId: state.settings.data.defaultProviderId,
+  }));
+}
+
+function settingsDraft() {
+  state.settings.draft ??= copySettingsData();
+  return state.settings.draft;
+}
+
+function openSettings(tab) {
+  state.settings.tab = SETTINGS_TABS.includes(tab) ? tab : state.settings.tab;
+  state.settings.open = true;
+  closeIdentityMenu(false);
+  const dialog = $('settings-dialog');
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  renderSettings();
+  const active = $('settings-nav-' + state.settings.tab);
+  if (typeof active.focus === 'function') active.focus();
+}
+
+function closeSettings() {
+  state.settings.open = false;
+  const dialog = $('settings-dialog');
+  if (typeof dialog.close === 'function' && dialog.open) dialog.close();
+  state.settings.form = null;
+  state.settings.draft = null;
+  state.settings.dirty = false;
+  clearProviderKeyInput();
+  $('provider-form').hidden = true;
+}
+
+// Keys never live anywhere but the transient password input and the PUT
+// body; this runs on save success, cancel, and dialog close.
+function clearProviderKeyInput() {
+  const key = $('provider-api-key');
+  if (key) key.value = '';
+}
+
+function setSettingsTab(tab) {
+  if (!SETTINGS_TABS.includes(tab)) return;
+  state.settings.tab = tab;
+  renderSettings();
+}
+
+function renderSettings() {
+  const tab = state.settings.tab;
+  $('settings-section-title').textContent = { general: 'General', appearance: 'Appearance', providers: 'Providers' }[tab];
+  for (const name of SETTINGS_TABS) {
+    $('settings-section-' + name).hidden = name !== tab;
+    const nav = $('settings-nav-' + name);
+    nav.classList.toggle('is-active', name === tab);
+    nav.setAttribute?.('aria-current', name === tab ? 'true' : 'false');
+  }
+  renderSettingsGeneral();
+  renderSettingsProviders();
+}
+
+function renderSettingsGeneral() {
+  const input = $('ceiling-input');
+  if (typeof document !== 'undefined' && document.activeElement !== input) {
+    input.value = state.settings.data.costCeilingUsd ?? '';
+  }
+}
+
+function renderSettingsProviders() {
+  const section = $('provider-list');
+  const dirtyBadge = $('provider-dirty');
+  const credStatus = $('cred-status');
+  $('provider-error').textContent = '';
+  const settings = state.settings;
+  if (settings.phase === 'error') {
+    credStatus.textContent = '';
+    section.textContent = '';
+    section.appendChild(el('div', 'side-empty', settings.error ?? 'Provider settings are unavailable.'));
+    $('settings-retry').hidden = false;
+    dirtyBadge.hidden = true;
+    return;
+  }
+  $('settings-retry').hidden = true;
+  const stored = settings.data.credentialStorage;
+  credStatus.textContent = stored.available
+    ? 'Saved keys are stored in protected local storage on this device.'
+    : `Protected key storage is unavailable${stored.reason ? ': ' + stored.reason : ''}. Keys can still be used for runs from this session.`;
+  credStatus.classList.toggle('cred-warn', !stored.available);
+
+  const draft = settings.phase === 'ok' ? settingsDraft() : null;
+  const providers = draft?.providers ?? [];
+  section.textContent = '';
+  if (!providers.length) {
+    section.appendChild(el('div', 'side-empty', 'No providers configured. Add one to route runs to a model.'));
+  }
+  for (const provider of providers) {
+    section.appendChild(renderProviderRow(provider, draft));
+  }
+  section.appendChild(renderNoDefaultRow(draft));
+  dirtyBadge.hidden = !state.settings.dirty;
+}
+
+function renderNoDefaultRow(draft) {
+  const row = el('div', 'provider-row provider-row-none');
+  const radio = document.createElement('input');
+  radio.type = 'radio';
+  radio.name = 'default-provider';
+  radio.value = '';
+  radio.id = 'default-none';
+  radio.checked = draft.defaultProviderId == null;
+  radio.addEventListener('change', () => {
+    if (radio.checked) { draft.defaultProviderId = null; state.settings.dirty = true; }
+    renderSettingsProviders();
+  });
+  const radioLabel = el('label', 'provider-default-label');
+  radioLabel.appendChild(radio);
+  radioLabel.appendChild(document.createTextNode('No default'));
+  row.appendChild(radioLabel);
+  row.appendChild(el('span', 'provider-meta', 'Runs refuse to start until a default provider is chosen.'));
+  return row;
+}
+
+function renderProviderRow(provider, draft) {
+  const row = el('div', 'provider-row');
+  const radio = document.createElement('input');
+  radio.type = 'radio';
+  radio.name = 'default-provider';
+  radio.value = provider.id;
+  radio.id = 'default-' + provider.id;
+  radio.checked = draft.defaultProviderId === provider.id;
+  radio.addEventListener('change', () => {
+    if (radio.checked) { draft.defaultProviderId = provider.id; state.settings.dirty = true; }
+    renderSettingsProviders();
+  });
+  const radioLabel = el('label', 'provider-default-label');
+  radioLabel.appendChild(radio);
+  radioLabel.appendChild(document.createTextNode('Default'));
+  row.appendChild(radioLabel);
+
+  const text = el('div', 'provider-text');
+  text.appendChild(el('span', 'provider-name', provider.label));
+  const keyState = provider.apiKey ? ' · key set (unsaved)' : provider.hasApiKey ? ' · key saved' : ' · no key';
+  text.appendChild(el('span', 'provider-meta', `${PROTOCOLS[provider.protocol] ?? provider.protocol} · ${provider.modelId}${keyState}`));
+  row.appendChild(text);
+
+  const edit = el('button', 'btn-quiet', 'Edit');
+  edit.type = 'button';
+  edit.id = 'edit-' + provider.id;
+  edit.addEventListener('click', () => openProviderForm(provider.id));
+  row.appendChild(edit);
+
+  const remove = el('button', 'btn-quiet provider-delete', 'Delete');
+  remove.type = 'button';
+  remove.id = 'delete-' + provider.id;
+  remove.addEventListener('click', () => {
+    if (remove.dataset.armed !== '1') {
+      remove.dataset.armed = '1';
+      remove.textContent = 'Confirm delete';
+      return;
+    }
+    state.settings.draft.providers = state.settings.draft.providers.filter(entry => entry.id !== provider.id);
+    if (state.settings.draft.defaultProviderId === provider.id) state.settings.draft.defaultProviderId = null;
+    state.settings.dirty = true;
+    renderSettingsProviders();
+  });
+  row.appendChild(remove);
+  return row;
+}
+
+function openProviderForm(id) {
+  const draft = settingsDraft();
+  const existing = id ? draft.providers.find(provider => provider.id === id) ?? null : null;
+  state.settings.form = existing
+    ? { id: existing.id, label: existing.label, protocol: existing.protocol, baseUrl: existing.baseUrl, modelId: existing.modelId }
+    : { id: null };
+  $('provider-label').value = existing?.label ?? '';
+  $('provider-protocol').value = existing?.protocol ?? 'openai-completions';
+  $('provider-base-url').value = existing?.baseUrl ?? '';
+  $('provider-model').value = existing?.modelId ?? '';
+  // Existing saved keys are never filled back into the UI.
+  clearProviderKeyInput();
+  const indicator = $('key-indicator');
+  indicator.hidden = !existing?.hasApiKey;
+  indicator.textContent = existing?.hasApiKey ? 'A key is already saved for this provider. Leave blank to keep it.' : '';
+  $('provider-form-error').textContent = '';
+  $('provider-form').hidden = false;
+  $('provider-label').focus?.();
+}
+
+function closeProviderForm() {
+  state.settings.form = null;
+  $('provider-form').hidden = true;
+  clearProviderKeyInput();
+}
+
+function applyProviderForm() {
+  const form = state.settings.form;
+  if (!form) return;
+  const label = $('provider-label').value.trim();
+  const protocol = $('provider-protocol').value;
+  const baseUrl = $('provider-base-url').value.trim();
+  const modelId = $('provider-model').value.trim();
+  const apiKey = $('provider-api-key').value;
+  const problem = !PROTOCOLS[protocol] ? 'Choose one of the three supported protocols.'
+    : !label || !baseUrl || !modelId ? 'Name, base URL and model are required.'
+    : null;
+  if (problem) {
+    $('provider-form-error').textContent = problem;
+    return;
+  }
+  const draft = settingsDraft();
+  const entry = { id: form.id ?? newProviderId(), label, protocol, baseUrl, modelId };
+  if (apiKey) entry.apiKey = apiKey;
+  else if (form.id) {
+    // Keep an unsaved typed key from a previous apply; saved keys stay server-side.
+    const previous = draft.providers.find(provider => provider.id === form.id);
+    if (previous?.apiKey) entry.apiKey = previous.apiKey;
+  }
+  state.settings.draft.providers = form.id
+    ? draft.providers.map(provider => (provider.id === form.id ? entry : provider))
+    : [...draft.providers, entry];
+  state.settings.dirty = true;
+  closeProviderForm();
+  renderSettingsProviders();
+}
+
+function newProviderId() {
+  let id;
+  do { id = 'prov-' + Math.random().toString(36).slice(2, 10); }
+  while (state.settings.draft?.providers.some(provider => provider.id === id));
+  return id;
+}
+
+function revertProviderDraft() {
+  state.settings.draft = null;
+  state.settings.dirty = false;
+  closeProviderForm();
+  renderSettingsProviders();
+}
+
+async function saveProviderDraft() {
+  const draft = settingsDraft();
+  const ceiling = readCeiling();
+  if (ceiling.error) {
+    $('provider-error').textContent = ceiling.error;
+    return;
+  }
+  const saved = await putSettings({
+    providers: providersToInput(draft.providers),
+    defaultProviderId: draft.defaultProviderId,
+    costCeilingUsd: ceiling.value,
+  }, 'provider-error');
+  if (saved) closeProviderForm();
+}
+
+async function saveGeneral() {
+  const ceiling = readCeiling();
+  if (ceiling.error) {
+    $('general-error').textContent = ceiling.error;
+    return;
+  }
+  $('general-error').textContent = '';
+  const current = state.settings.draft ?? copySettingsData();
+  await putSettings({
+    providers: providersToInput(current.providers),
+    defaultProviderId: current.defaultProviderId,
+    costCeilingUsd: ceiling.value,
+  }, 'general-error');
+}
+
+// ---------- identity menu (bottom-left, opens upward) ----------
+
+function toggleIdentityMenu(open) {
+  const menu = $('identity-menu');
+  const show = open ?? menu.hidden;
+  menu.hidden = !show;
+  $('identity-btn').setAttribute?.('aria-expanded', String(show));
+  if (show) $('menu-settings')?.focus?.();
+}
+
+function closeIdentityMenu(refocus) {
+  const menu = $('identity-menu');
+  if (menu.hidden) return;
+  menu.hidden = true;
+  $('identity-btn').setAttribute?.('aria-expanded', 'false');
+  if (refocus) $('identity-btn')?.focus?.();
+}
+
 // ---------- top-level render ----------
 
 function renderAll() {
@@ -508,6 +1034,8 @@ function renderAll() {
   renderComposer();
   renderContext();
   renderFiles();
+  renderBootNotice();
+  if (state.settings.open) renderSettings();
 }
 
 async function openThread(id) {
@@ -565,10 +1093,26 @@ function bindUi() {
   $('nav-toggle').addEventListener('click', () => togglePane('nav', 'nav-off'));
   $('inspector-toggle').addEventListener('click', () => togglePane('inspector', 'inspector-off'));
   $('scrim').addEventListener('click', closePanes);
-  $('settings-btn').addEventListener('click', () => {
-    const dialog = $('settings-dialog');
-    if (dialog.showModal) dialog.showModal();
+  $('identity-btn').addEventListener('click', () => toggleIdentityMenu());
+  $('menu-settings').addEventListener('click', () => { toggleIdentityMenu(false); openSettings('general'); });
+  $('provider-setup').addEventListener('click', () => openSettings('providers'));
+  for (const tab of SETTINGS_TABS) {
+    $('settings-nav-' + tab).addEventListener('click', () => setSettingsTab(tab));
+  }
+  $('settings-close').addEventListener('click', closeSettings);
+  $('settings-dialog').addEventListener('close', closeSettings);
+  $('settings-dialog').addEventListener('click', event => {
+    // A click on the dialog itself is a backdrop click; close without losing saved state.
+    if (event.target === $('settings-dialog')) closeSettings();
   });
+  $('general-save').addEventListener('click', () => { saveGeneral(); });
+  $('provider-add').addEventListener('click', () => openProviderForm(null));
+  $('provider-apply').addEventListener('click', applyProviderForm);
+  $('provider-cancel-form').addEventListener('click', closeProviderForm);
+  $('provider-revert').addEventListener('click', revertProviderDraft);
+  $('provider-save-changes').addEventListener('click', () => { saveProviderDraft(); });
+  $('settings-retry')?.addEventListener?.('click', () => { loadSettingsSection().then(renderAll); });
+  $('boot-retry').addEventListener('click', () => { retryFailedSections(); });
   for (const choice of ['light', 'dark', 'system']) {
     $('theme-' + choice).addEventListener('click', () => applyTheme(choice));
   }
@@ -592,6 +1136,11 @@ function bindUi() {
   if (typeof document.addEventListener === 'function') {
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
+      if (!$('identity-menu').hidden) {
+        closeIdentityMenu(true);
+        return;
+      }
+      if ($('settings-dialog').open) return; // the native dialog handles Escape
       if (state.files.path) {
         state.files.path = null;
         renderFiles();
@@ -599,21 +1148,25 @@ function bindUi() {
       }
       closePanes();
     });
+    document.addEventListener('click', event => {
+      const menu = $('identity-menu');
+      if (menu.hidden) return;
+      const target = event.target;
+      if (target && (menu.contains?.(target) || $('identity-btn').contains?.(target))) return;
+      closeIdentityMenu(false);
+    });
   }
 }
 
 // ---------- boot ----------
 
+// Sections settle independently: a failed catalog or dead backend renders
+// its own recovery path instead of leaving "Checking…" and a blank dropdown.
 async function boot() {
   initTheme();
   bindUi();
   connectEvents();
-  try {
-    await Promise.all([fetchState(), fetchTasks()]);
-  } catch (error) {
-    pushLocalError(error.message);
-    return;
-  }
+  await Promise.all([loadStateSection(), loadTasksSection(), loadSettingsSection()]);
   renderAll();
 }
 

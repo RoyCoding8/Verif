@@ -24,9 +24,6 @@
     <button class="icon-btn" id="inspector-toggle" type="button" aria-label="Toggle inspector">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 4v16" stroke="currentColor" stroke-width="1.8"/></svg>
     </button>
-    <button class="icon-btn" id="settings-btn" type="button" aria-label="Settings" aria-haspopup="dialog">
-      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h13M21 17h-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="12" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="19" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-    </button>
   </header>
 
   <div class="shell">
@@ -51,7 +48,20 @@
         </div>
 
         <div class="side-foot">
-          <span class="mono" id="host"></span>
+          <button class="identity-btn" id="identity-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Device and settings menu">
+            <span class="identity-mark" aria-hidden="true">V</span>
+            <span class="identity-text">
+              <span class="identity-name" id="host">unknown host</span>
+              <span class="identity-sub">Local device</span>
+            </span>
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="identity-menu" id="identity-menu" role="menu" aria-label="Device menu" hidden>
+            <div class="identity-menu-head">
+              <span class="identity-sub">Runs locally · no account or sync</span>
+            </div>
+            <button class="identity-item" id="menu-settings" role="menuitem" type="button">Settings</button>
+          </div>
         </div>
       </div>
     </aside>
@@ -65,6 +75,14 @@
           </div>
           <span class="chip chip-idle" id="thread-status">Idle</span>
         </header>
+        <div class="boot-notice" id="boot-notice" hidden role="alert">
+          <span id="boot-text"></span>
+          <button class="btn-quiet" id="boot-retry" type="button">Retry</button>
+          <details class="boot-detail-wrap">
+            <summary class="boot-detail-summary">Error detail</summary>
+            <code class="boot-detail mono" id="boot-detail"></code>
+          </details>
+        </div>
         <div class="chat-scroll">
           <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="Messages"></div>
         </div>
@@ -74,18 +92,23 @@
             <textarea id="goal" rows="1" placeholder="Describe the task"></textarea>
           </div>
           <div class="composer-row">
-            <div class="field">
-              <label class="visually-hidden" for="task">Task</label>
-              <select id="task" aria-label="Task"></select>
-            </div>
-            <div class="field">
-              <label class="visually-hidden" for="mode">Mode</label>
-              <select id="mode" aria-label="Mode">
-                <option value="fixture">Demo</option>
-                <option value="pi">Pi</option>
-              </select>
-            </div>
-            <p class="mode-note" id="mode-note" hidden></p>
+            <span class="provider-status" id="provider-status"></span>
+            <button class="btn-quiet" id="provider-setup" type="button" hidden>Set up providers</button>
+            <details class="composer-secondary" id="demo-controls">
+              <summary>Demo &amp; testing</summary>
+              <div class="field">
+                <label class="visually-hidden" for="task">Task</label>
+                <select id="task" aria-label="Task"></select>
+              </div>
+              <div class="field">
+                <label class="visually-hidden" for="mode">Mode</label>
+                <select id="mode" aria-label="Mode">
+                  <option value="fixture">Demo</option>
+                  <option value="pi">Pi</option>
+                </select>
+              </div>
+              <p class="mode-note" id="mode-note" hidden></p>
+            </details>
             <div class="composer-spacer"></div>
             <button class="btn-primary btn-run" id="send" type="button">
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -137,22 +160,89 @@
   <div class="scrim" id="scrim" hidden></div>
 
   <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-heading">
-    <form method="dialog" class="settings-form">
-      <header class="settings-head">
+    <div class="settings-shell">
+      <aside class="settings-nav" aria-label="Settings sections">
         <h2 id="settings-heading">Settings</h2>
-        <button class="icon-btn" id="settings-close" type="submit" aria-label="Close settings">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        </button>
-      </header>
-      <div class="settings-field">
-        <span class="settings-label" id="appearance-label">Appearance</span>
-        <div class="segmented" role="group" aria-labelledby="appearance-label">
-          <button type="button" id="theme-light">Light</button>
-          <button type="button" id="theme-dark">Dark</button>
-          <button type="button" id="theme-system">System</button>
-        </div>
+        <button class="settings-tab" id="settings-nav-general" type="button">General</button>
+        <button class="settings-tab" id="settings-nav-appearance" type="button">Appearance</button>
+        <button class="settings-tab" id="settings-nav-providers" type="button">Providers</button>
+      </aside>
+      <div class="settings-body">
+        <header class="settings-head">
+          <h3 id="settings-section-title">General</h3>
+          <button class="icon-btn" id="settings-close" type="button" aria-label="Close settings">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </header>
+
+        <section class="settings-section" id="settings-section-general">
+          <div class="settings-field">
+            <label class="settings-label" for="ceiling-input">Approved spending ceiling (USD per run)</label>
+            <input type="number" id="ceiling-input" min="0" step="0.01" inputmode="decimal" placeholder="Unconfigured">
+            <p class="settings-hint">Paid runs refuse to start without a positive ceiling. Blank leaves spending disabled.</p>
+          </div>
+          <p class="settings-error" id="general-error" role="alert"></p>
+          <button class="btn-primary" id="general-save" type="button">Save</button>
+        </section>
+
+        <section class="settings-section" id="settings-section-appearance" hidden>
+          <div class="settings-field">
+            <span class="settings-label" id="appearance-label">Appearance</span>
+            <div class="segmented" role="group" aria-labelledby="appearance-label">
+              <button type="button" id="theme-light">Light</button>
+              <button type="button" id="theme-dark">Dark</button>
+              <button type="button" id="theme-system">System</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section" id="settings-section-providers" hidden>
+          <p class="settings-hint" id="cred-status"></p>
+          <button class="btn-quiet" id="settings-retry" type="button" hidden>Retry</button>
+          <p class="settings-error" id="provider-error" role="alert"></p>
+          <div class="provider-list" id="provider-list" aria-label="Configured providers"></div>
+          <div class="provider-actions">
+            <button class="btn-quiet" id="provider-add" type="button">Add provider</button>
+            <span class="provider-dirty" id="provider-dirty" hidden>Unsaved changes</span>
+            <span class="provider-actions-spacer"></span>
+            <button class="btn-quiet" id="provider-revert" type="button">Cancel</button>
+            <button class="btn-primary" id="provider-save-changes" type="button">Save changes</button>
+          </div>
+          <form class="provider-form" id="provider-form" hidden>
+            <div class="settings-field">
+              <label class="settings-label" for="provider-label">Name</label>
+              <input id="provider-label" autocomplete="off">
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="provider-protocol">Protocol</label>
+              <select id="provider-protocol">
+                <option value="openai-completions">OpenAI Chat Completions</option>
+                <option value="openai-responses">OpenAI Responses</option>
+                <option value="anthropic-messages">Anthropic Messages</option>
+              </select>
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="provider-base-url">Base URL</label>
+              <input class="mono" id="provider-base-url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="provider-model">Model</label>
+              <input class="mono" id="provider-model" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="provider-api-key">API key</label>
+              <input type="password" id="provider-api-key" autocomplete="new-password" placeholder="Paste key to set or replace">
+              <span class="settings-hint" id="key-indicator" hidden></span>
+            </div>
+            <p class="settings-error" id="provider-form-error" role="alert"></p>
+            <div class="provider-form-actions">
+              <button class="btn-quiet" id="provider-cancel-form" type="button">Cancel</button>
+              <button class="btn-primary" id="provider-apply" type="button">Apply</button>
+            </div>
+          </form>
+        </section>
       </div>
-    </form>
+    </div>
   </dialog>
 </div>
 <script src="app.js"></script>
