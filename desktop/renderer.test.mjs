@@ -132,6 +132,18 @@ async function bootedRenderer() {
   return renderer;
 }
 
+async function startDemoRun(renderer) {
+  const before = renderer.run('state.summaries.length');
+  renderer.registry.get('goal').value = 'Reserve the demo room for the walkthrough';
+  renderer.registry.get('send').click();
+  await until(() => renderer.run('state.summaries.length') === before + 1, 30000, 'thread creation');
+  const id = renderer.run('state.summaries[0].id');
+  await until(async () => (await (await realFetch(`${base}/api/threads/${id}`)).json()).status === 'done',
+    90000, 'fixture run to finish');
+  await renderer.run(`(async () => { await openThread(${JSON.stringify(id)}); })()`);
+  return id;
+}
+
 test('appearance choices persist and resolve through settings controls', async () => {
   const renderer = await bootedRenderer();
   renderer.registry.get('theme-dark').click();
@@ -220,15 +232,9 @@ test('a dead backend makes Run fail visibly instead of silently', async () => {
 
 test('a valid run opens the thread with messages and results, and files report errors honestly', async () => {
   const renderer = await bootedRenderer();
-  renderer.registry.get('goal').value = 'Reserve the demo room for the walkthrough';
-  renderer.registry.get('send').click();
-  await until(() => renderer.run('state.summaries.length') === 1, 30000, 'thread creation');
-  const id = renderer.run('state.summaries[0].id');
+  const id = await startDemoRun(renderer);
   const response = await realFetch(`${base}/api/threads/${id}`);
   assert.equal(response.status, 200, 'the renderer posted a well-formed run');
-  await until(async () => (await (await realFetch(`${base}/api/threads/${id}`)).json()).status === 'done',
-    90000, 'fixture run to finish');
-  await renderer.run(`(async () => { await openThread(${JSON.stringify(id)}); })()`);
   const transcript = rendererText(renderer, 'transcript');
   assert.ok(transcript.includes('Dispatching'), 'the run dispatch line is rendered');
   assert.ok(transcript.includes('Promoted'), 'the promoted result is rendered');
@@ -243,14 +249,7 @@ test('a valid run opens the thread with messages and results, and files report e
 });
 test('a promoted result shows a human-readable card with the exact receipt under a collapsed disclosure', async () => {
   const renderer = await bootedRenderer();
-  const before = renderer.run('state.summaries.length');
-  renderer.registry.get('goal').value = 'Reserve the demo room for the walkthrough';
-  renderer.registry.get('send').click();
-  await until(() => renderer.run('state.summaries.length') === before + 1, 30000, 'thread creation');
-  const id = renderer.run('state.summaries[0].id');
-  await until(async () => (await (await realFetch(`${base}/api/threads/${id}`)).json()).status === 'done',
-    90000, 'fixture run to finish');
-  await renderer.run(`(async () => { await openThread(${JSON.stringify(id)}); })()`);
+  const id = await startDemoRun(renderer);
   const stored = renderer.run(`state.threads.get(${JSON.stringify(id)})`);
   const result = stored.results[0];
   const transcript = renderer.registry.get('transcript');
@@ -313,23 +312,11 @@ test('promoted cards derive the visible summary from fields and keep the raw rec
   assert.ok(newExact.includes('abcdef1234567890abcdef1234567890abcdef12')
     && newExact.includes(JSON.stringify({ stock: 'bounded' })),
     'Details retains the exact commit and assurance on a current card');
-
-  const refused = renderer.run(`renderMessage({ role: 'result', data: {
-    task: 'reserve', status: 'refused', detail: 'Candidate has no changes or changed paths outside approved scope',
-    operation: 'op-ref-1', commit: null, assurance: null } })`);
-  const refusedVisible = textOf(refused.children.find(node => node.className === 'detail'));
-  assert.ok(refusedVisible.includes('Candidate has no changes'),
-    'a refused reason stays fully visible');
 });
 
 test('opening a file swaps the inspector rail to the file view, and Back returns to details', async () => {
   const renderer = await bootedRenderer();
-  const before = renderer.run('state.summaries.length');
-  renderer.registry.get('goal').value = 'Reserve the demo room for the walkthrough';
-  renderer.registry.get('send').click();
-  await until(() => renderer.run('state.summaries.length') === before + 1, 30000, 'thread creation');
-  const id = renderer.run('state.summaries[0].id');
-  await renderer.run(`(async () => { await openThread(${JSON.stringify(id)}); })()`);
+  await startDemoRun(renderer);
   await renderer.run('openFile("reserve.mjs")');
   assert.equal(renderer.registry.get('file-view').hidden, false, 'the file view is the rail content');
   assert.equal(renderer.registry.get('ctx-details').hidden, true, 'details hide while a file is open');

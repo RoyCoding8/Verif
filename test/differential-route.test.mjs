@@ -63,6 +63,10 @@ test('a refactor with equal base outputs passes and stale baseline identity is r
   assert.deepEqual(receipt.results[0].differential.comparisons, [{ id: 'value', baseOutput: { a: 7, b: 2 }, candidateOutput: { a: 7, b: 2 } }]);
   assert.deepEqual(receipt.results[0].artifacts['cases.json'] && JSON.parse(Buffer.from(receipt.results[0].artifacts['cases.json'].base64, 'base64')),
     { cases: [{ id: 'value', status: 'PASS' }], comparisons: receipt.results[0].differential.comparisons });
+  const exact = '{"cases":[{"id":"value","status":"PASS"}],' +
+    '"comparisons":[{"baseOutput":{"a":7,"b":2},"candidateOutput":{"a":7,"b":2},"id":"value"}]}';
+  assert.equal(Buffer.from(receipt.results[0].artifacts['cases.json'].base64, 'base64').toString('utf8'), exact);
+  assert.equal(receipt.results[0].artifacts['cases.json'].digest, hash(Buffer.from(exact, 'utf8')));
   assert.equal(receipt.results[0].keys.run.length, 64);
   const input = decisionInput(f, receipt);
   assert.deepEqual(decide(input), { promote: true });

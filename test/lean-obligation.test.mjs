@@ -35,6 +35,13 @@ async function fixture(t) {
   return { ...settings, oracleRoot, tasks: [approve(intent)] };
 }
 
+test('planning refuses an oracle file exactly at its exclusive size limit', async t => {
+  const settings = await fixture(t);
+  await writeFile(join(settings.oracleRoot, 'proof.json'), Buffer.alloc(2 * 1024 * 1024, 0x20));
+  await assert.rejects(proposeTask({ ...settings, draft: { ...intent, oracleFiles: ['proof.json'] },
+    worker: async () => assert.fail('Rejected oracle dispatched a worker') }), /Invalid oracle file proof\.json/);
+});
+
 test('Lean plans bind a single named theorem and proposals match the approved oracle format', async t => {
   assert.throws(() => planVerification({ ...intent, obligations: [{ ...obligation, cases: ['bad name'] }] }), /one named theorem/);
   assert.throws(() => planVerification({ ...intent, obligations: [{ ...obligation, expect: 'FAIL', witness: theorem }] }), /expected PASS/);

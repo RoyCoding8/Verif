@@ -80,7 +80,6 @@ async function ensureWorkspace(thread) {
   const workspace = join(dataDir, 'threads', thread.id, 'workspace');
   await mkdir(workspace, { recursive: true });
   thread.settings = await createDemo(workspace);
-  thread.workspace = workspace;
   persist();
   return thread.settings;
 }
@@ -157,8 +156,6 @@ async function piRoute() {
 }
 
 // ---------- runs ----------
-
-const terminal = new Set(['promoted', 'refused', 'blocked']);
 
 async function startRun(thread) {
   const mode = thread.mode;

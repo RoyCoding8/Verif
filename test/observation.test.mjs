@@ -63,7 +63,7 @@ async function observationFixture(t) {
   };
 }
 
-function probeTask({ base, oracles }, obligations) {
+function probeTask({ base, oracles }, obligations, outputs = []) {
   return approvedTask(approve({
     id: 'observation', revision: 1, goal: 'Unrepresentable subject outputs fail closed per case.',
     claims: [{ id: 'probe', statement: 'Probe outputs compare exactly or fail closed.', required: 'tested' }],
@@ -72,7 +72,7 @@ function probeTask({ base, oracles }, obligations) {
     policy: { ref: 'refs/heads/protected', budgetMs: 180_000, reuseEvidence: true },
     obligations: obligations.map(({ id, oracle: oracleKey, cases, subject, expect, witness }) => ({
       id, claim: 'probe', subject, expect, ...(witness ? { witness } : {}), method: 'node-test',
-      oracle: oracles[oracleKey], cases, timeoutMs: 5_000, outputs: [],
+      oracle: oracles[oracleKey], cases, timeoutMs: 5_000, outputs,
     })),
   }));
 }
@@ -81,6 +81,17 @@ function verifyPlan(fixture, task, journal, attempt, onVerdict) {
   return verify({ repo: fixture.repo, task, base: fixture.base, candidate: fixture.candidate,
     oracleRoot: fixture.oracleRoot, scratch: fixture.scratch, deadline: Date.now() + 60_000, journal, attempt, onVerdict });
 }
+
+test('node-test evidence artifacts carry the exact sorted-key bytes', async t => {
+  const fixture = await observationFixture(t);
+  t.after(fixture.cleanup);
+  const receipt = await verifyPlan(fixture, probeTask(fixture,
+    [{ id: 'exact', oracle: 'value', cases: ['c2'], subject: 'candidate', expect: 'PASS' }], ['cases.json']));
+  const exact = '{"cases":[{"id":"c2","status":"PASS"}],"observations":[{"actual":42,"id":"c2"}]}';
+  const artifact = receipt.results[0].artifacts['cases.json'];
+  assert.equal(Buffer.from(artifact.base64, 'base64').toString('utf8'), exact);
+  assert.equal(artifact.digest, hash(Buffer.from(exact, 'utf8')));
+});
 
 const FAIL_LEGS = [
   { id: 'undef-before', oracle: 'undefValue', cases: ['c1'], subject: 'base', expect: 'FAIL', witness: 'c1' },

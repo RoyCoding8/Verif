@@ -105,6 +105,13 @@ function stableJson(value) {
   return JSON.stringify(sort(value));
 }
 
+function buildArtifacts(outputs, output) {
+  const contents = Buffer.from(stableJson(output));
+  const base64 = contents.toString('base64');
+  const artifacts = Object.fromEntries(outputs.map(path => [path, { digest: hash(contents), base64 }]));
+  return { artifacts, outputs: Object.fromEntries(outputs.map(path => [path, artifacts[path].digest])) };
+}
+
 export function subjectFor(obligation, base, candidate) {
   if (obligation.subject === 'base') return base;
   if (obligation.subject === 'candidate') return candidate;
@@ -166,18 +173,14 @@ async function runNodeDifferential({ repo, obligation, claim, base, candidate, m
     baseOutput: baseline.observations[index].actual, candidateOutput: current.observations[index].actual }));
   const cases = differentialCases(obligation, comparisons);
   const report = readReport({ cases }, obligation);
-  const output = { cases, comparisons };
-  const artifacts = Object.fromEntries(obligation.outputs.map(path => {
-    const contents = Buffer.from(stableJson(output));
-    return [path, { digest: hash(contents), base64: contents.toString('base64') }];
-  }));
+  const { artifacts, outputs } = buildArtifacts(obligation.outputs, { cases, comparisons });
   return { id: obligation.id, ...report, commit: candidate, manifest, level: 'tested',
     keys: evidenceKeys(obligation, claim, candidate, manifest, evidenceEnvironment(obligation), undefined,
       { commit: base, manifest: baseManifest }),
     differential: { base, manifest: baseManifest, comparisons },
     observation: { stdout: hash(stableJson([baseline.stdout, current.stdout])),
       stderr: hash(stableJson([baseline.stderr, current.stderr])), exit: 0 },
-    outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])), artifacts };
+    outputs, artifacts };
 }
 
 function historyInputs(oracle, obligation, claim, manifest, deadline) {
@@ -312,10 +315,7 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
   }
   const report = readReport({ cases: statuses }, obligation);
   if (prepared.mutation) output.mutants = prepared.mutation.results;
-  const artifacts = Object.fromEntries(obligation.outputs.map(path => {
-    const contents = Buffer.from(stableJson(output));
-    return [path, { digest: hash(contents), base64: contents.toString('base64') }];
-  }));
+  const { artifacts, outputs } = buildArtifacts(obligation.outputs, output);
   return {
     id: obligation.id, ...report, commit, manifest, level,
     keys: evidenceKeys(obligation, claim, commit, manifest, evidenceEnvironment(obligation), prepared.dependencies),
@@ -326,8 +326,7 @@ function presentEvidence(raw, { obligation, claim, commit, manifest, cases, prep
     ...(prepared.mutation ? { mutation: prepared.mutation } : {}),
     ...(obligation.proofDependencies ? { proofDependencies: prepared.dependencies } : {}),
     observation: { stdout: hash(raw.stdout), stderr: hash(raw.stderr), exit: raw.exit },
-    outputs: Object.fromEntries(Object.entries(artifacts).map(([path, artifact]) => [path, artifact.digest])),
-    artifacts,
+    outputs, artifacts,
   };
 }
 
