@@ -14,14 +14,15 @@ export function requireThat(condition, message) {
 
 export const maxApprovedInput = 2 * 1024 * 1024;
 
-export async function readApprovedFile(root, name, limit, { digest: expected, digestLabel, escapeLabel, sizeLabel }) {
+export async function readApprovedFile(root, name, limit, options) {
+  const { digest: expected, digestLabel, escapeLabel, sizeLabel } = options;
   const path = join(root, name);
   const actual = relative(await realpath(root), await realpath(path));
   requireThat(actual === name.split('/').join(sep) && !isAbsolute(actual), escapeLabel);
   const stats = await lstat(path);
   requireThat(stats.isFile() && stats.size <= limit, sizeLabel);
   const bytes = await readFile(path);
-  requireThat(expected === undefined || hash(bytes) === expected, digestLabel);
+  requireThat(!Object.hasOwn(options, 'digest') || hash(bytes) === expected, digestLabel);
   return bytes;
 }
 

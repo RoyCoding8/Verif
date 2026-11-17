@@ -81,6 +81,8 @@ test('approved Lean input readers accept their binding and reject drift, escapes
     /Invalid or oversized Lean input/);
   await assert.rejects(readLeanDefinitions(settings.oracleRoot, { ...next, definitionDigest: hash(trusted + '-- drift\n') }),
     /Lean input digest changed: frozen\.lean/);
+  await assert.rejects(readLeanDefinitions(settings.oracleRoot, { ...next, definitionDigest: undefined }),
+    /Lean input digest changed: frozen\.lean/);
 });
 
 test('semantic delegation challenge binds the revision and refuses an unrelated successor oracle', async t => {
