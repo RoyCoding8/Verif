@@ -132,9 +132,6 @@ async function bootedRenderer() {
   return renderer;
 }
 
-// Shared demo startup for the run-driven tests: sets the goal, dispatches,
-// waits for creation, then waits for the fixture run to finish and opens
-// the thread so each test starts from the same completed state.
 async function startDemoRun(renderer) {
   const before = renderer.run('state.summaries.length');
   renderer.registry.get('goal').value = 'Reserve the demo room for the walkthrough';
