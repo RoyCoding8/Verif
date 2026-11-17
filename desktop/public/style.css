@@ -165,15 +165,20 @@ button {
 .icon-btn:disabled { opacity: 0.4; cursor: default; }
 .icon-btn svg { width: 18px; height: 18px; }
 
+/* One placement model: panes own named areas, collapsed panes own a
+   zero-width track via --nav-w / --rail-w. No state may re-template
+   the shell, so every toggle combination lands in the same place. */
 .shell {
   flex: 1 1 auto;
   display: grid;
   grid-template-columns: var(--nav-w) minmax(0, 1fr) var(--rail-w);
+  grid-template-areas: "nav center rail";
   min-height: 0;
   min-width: 0;
 }
 
 .sidebar {
+  grid-area: nav;
   min-height: 0;
   min-width: 0;
   background: var(--sidebar-bg);
@@ -303,6 +308,7 @@ button {
 .btn-quiet:disabled { opacity: 0.5; cursor: default; }
 
 .center {
+  grid-area: center;
   flex: 1 1 auto;
   display: flex;
   min-width: 0;
@@ -538,7 +544,7 @@ textarea:focus, select:focus, input:focus {
   background: var(--bg);
 }
 
-.ctx-details { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.ctx-details { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 12px; }
 
 .file-head {
   flex: 0 0 auto;
@@ -568,10 +574,10 @@ textarea:focus, select:focus, input:focus {
 .file-content.empty { color: var(--muted); }
 
 .context {
+  grid-area: rail;
   min-height: 0;
   min-width: 0;
-  background: var(--sidebar-bg);
-  border-left: 1px solid var(--border);
+  background: var(--bg);
 }
 
 .ctx-inner {
@@ -582,6 +588,9 @@ textarea:focus, select:focus, input:focus {
   min-height: 0;
   overflow-y: auto;
   padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--sidebar-bg);
 }
 
 .ctx-section { display: flex; flex-direction: column; gap: 6px; }
@@ -693,10 +702,9 @@ textarea:focus, select:focus, input:focus {
 
 .app.nav-off { --nav-w: 0px; }
 .app.nav-off .sidebar { display: none; }
-.app.nav-off .shell { grid-template-columns: minmax(0, 1fr) var(--rail-w); }
 .app.inspector-off { --rail-w: 0px; }
 .app.inspector-off .context { display: none; }
-.app.inspector-off .shell { grid-template-columns: var(--nav-w) minmax(0, 1fr); }
+.app.file-open.inspector-off { --rail-w: 0px; }
 
 @media (min-width: 1500px) {
   :root { --nav-w: 280px; --rail-w: 360px; --content-max: 768px; }
@@ -705,11 +713,15 @@ textarea:focus, select:focus, input:focus {
 @media (max-width: 1320px) {
   .app.file-open { --nav-w: 0px; --rail-w: 420px; }
   .app.file-open .sidebar { display: none; }
-  .app.file-open .shell { grid-template-columns: minmax(0, 1fr) var(--rail-w); }
 }
 
 @media (max-width: 1024px) {
-  .shell { grid-template-columns: minmax(0, 1fr); }
+  /* Narrow shell is a single center track. Panes are fixed overlays:
+     they float above the center and never reserve a track here. */
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "center";
+  }
 
   .sidebar {
     position: fixed;
