@@ -109,7 +109,11 @@ function prefersDark() {
 
 function renderAppearance() {
   for (const choice of ['light', 'dark', 'system']) {
-    $('theme-' + choice).classList.toggle('is-active', state.appearance === choice);
+    const input = $('theme-' + choice);
+    input.classList.toggle('is-active', state.appearance === choice);
+    // Native radios carry the selected state; the class only mirrors it for
+    // the check harness.
+    input.checked = state.appearance === choice;
   }
 }
 
@@ -753,12 +757,27 @@ function settingsDraft() {
 function openSettings(tab) {
   state.settings.tab = SETTINGS_TABS.includes(tab) ? tab : state.settings.tab;
   state.settings.open = true;
+  // Remember the control that opened Settings so focus can return to it on
+  // close (falls back to the identity button when it disappeared).
+  state.settings.opener = (typeof document !== 'undefined' && document.activeElement) || null;
   closeIdentityMenu(false);
   const dialog = $('settings-dialog');
   if (typeof dialog.showModal === 'function') dialog.showModal();
   renderSettings();
   const active = $('settings-nav-' + state.settings.tab);
   if (typeof active.focus === 'function') active.focus();
+}
+
+// Focus returns to the visible opener; if it disappeared (menu item inside
+// a closed menu, a setup button hidden after a successful save), fall back
+// to the stable identity button.
+function restoreSettingsFocus() {
+  const opener = state.settings.opener;
+  state.settings.opener = null;
+  const visible = opener && typeof opener.focus === 'function' && !opener.hidden
+    && (opener.offsetParent === undefined || opener.offsetParent !== null);
+  const target = visible ? opener : $('identity-btn');
+  if (target && typeof target.focus === 'function') target.focus();
 }
 
 function closeSettings() {
@@ -770,6 +789,7 @@ function closeSettings() {
   state.settings.dirty = false;
   clearProviderKeyInput();
   $('provider-form').hidden = true;
+  restoreSettingsFocus();
 }
 
 // Keys never live anywhere but the transient password input and the PUT
@@ -821,9 +841,12 @@ function renderSettingsProviders() {
   }
   $('settings-retry').hidden = true;
   const stored = settings.data.credentialStorage;
+  // A reason may arrive with its own trailing period; strip it so the fixed
+  // sentence structure never renders a double period.
+  const reason = stored.reason ? String(stored.reason).trim().replace(/\.+\s*$/, '') : '';
   credStatus.textContent = stored.available
     ? 'Saved keys are stored in protected local storage on this device.'
-    : `Protected key storage is unavailable${stored.reason ? ': ' + stored.reason : ''}. Keys can still be used for runs from this session.`;
+    : `Protected key storage is unavailable${reason ? ': ' + reason : ''}. Keys can still be used for runs from this session.`;
   credStatus.classList.toggle('cred-warn', !stored.available);
 
   const draft = settings.phase === 'ok' ? settingsDraft() : null;
@@ -888,6 +911,21 @@ function renderProviderRow(provider, draft) {
   edit.addEventListener('click', () => openProviderForm(provider.id));
   row.appendChild(edit);
 
+  // A staged (typed but unsaved) key can be dropped on its own without
+  // canceling the other draft edits, and without touching the saved key.
+  if (provider.apiKey) {
+    const clearKey = el('button', 'btn-quiet', 'Clear staged key');
+    clearKey.type = 'button';
+    clearKey.id = 'clear-key-' + provider.id;
+    clearKey.addEventListener('click', () => {
+      const staged = state.settings.draft?.providers.find(entry => entry.id === provider.id);
+      if (staged) delete staged.apiKey;
+      state.settings.dirty = true;
+      renderSettingsProviders();
+    });
+    row.appendChild(clearKey);
+  }
+
   const remove = el('button', 'btn-quiet provider-delete', 'Delete');
   remove.type = 'button';
   remove.id = 'delete-' + provider.id;
@@ -919,8 +957,10 @@ function openProviderForm(id) {
   // Existing saved keys are never filled back into the UI.
   clearProviderKeyInput();
   const indicator = $('key-indicator');
-  indicator.hidden = !existing?.hasApiKey;
-  indicator.textContent = existing?.hasApiKey ? 'A key is already saved for this provider. Leave blank to keep it.' : '';
+  indicator.hidden = !(existing?.hasApiKey || existing?.apiKey);
+  indicator.textContent = existing?.apiKey
+    ? 'An unsaved key is staged for this provider. Leave blank to keep it, or clear it from the provider list.'
+    : existing?.hasApiKey ? 'A key is already saved for this provider. Leave blank to keep it.' : '';
   $('provider-form-error').textContent = '';
   $('provider-form').hidden = false;
   $('provider-label').focus?.();
@@ -932,6 +972,15 @@ function closeProviderForm() {
   clearProviderKeyInput();
 }
 
+function setRequiredFieldValidity(invalidIds) {
+  const all = ['provider-label', 'provider-base-url', 'provider-model'];
+  for (const fieldId of all) {
+    const field = $(fieldId);
+    const invalid = invalidIds ? invalidIds.includes(fieldId) : false;
+    field.setAttribute?.('aria-invalid', invalid ? 'true' : 'false');
+  }
+}
+
 function applyProviderForm() {
   const form = state.settings.form;
   if (!form) return;
@@ -940,20 +989,30 @@ function applyProviderForm() {
   const baseUrl = $('provider-base-url').value.trim();
   const modelId = $('provider-model').value.trim();
   const apiKey = $('provider-api-key').value;
+  const missing = [
+    ['provider-label', label],
+    ['provider-base-url', baseUrl],
+    ['provider-model', modelId],
+  ].filter(([, value]) => !value).map(([fieldId]) => fieldId);
   const problem = !PROTOCOLS[protocol] ? 'Choose one of the three supported protocols.'
-    : !label || !baseUrl || !modelId ? 'Name, base URL and model are required.'
+    : missing.length ? 'Name, base URL and model are required.'
     : null;
   if (problem) {
     $('provider-form-error').textContent = problem;
+    setRequiredFieldValidity(missing);
     return;
   }
+  setRequiredFieldValidity(null);
   const draft = settingsDraft();
-  const entry = { id: form.id ?? newProviderId(), label, protocol, baseUrl, modelId };
+  // The saved-key flag is view-only state that must survive edits: a fresh
+  // entry object would otherwise make an edited provider look keyless even
+  // though its saved key is preserved server-side.
+  const previous = form.id ? draft.providers.find(provider => provider.id === form.id) : null;
+  const entry = { id: form.id ?? newProviderId(), label, protocol, baseUrl, modelId, hasApiKey: Boolean(previous?.hasApiKey) };
   if (apiKey) entry.apiKey = apiKey;
-  else if (form.id) {
+  else if (previous?.apiKey) {
     // Keep an unsaved typed key from a previous apply; saved keys stay server-side.
-    const previous = draft.providers.find(provider => provider.id === form.id);
-    if (previous?.apiKey) entry.apiKey = previous.apiKey;
+    entry.apiKey = previous.apiKey;
   }
   state.settings.draft.providers = form.id
     ? draft.providers.map(provider => (provider.id === form.id ? entry : provider))
@@ -1109,6 +1168,10 @@ function bindUi() {
   $('provider-add').addEventListener('click', () => openProviderForm(null));
   $('provider-apply').addEventListener('click', applyProviderForm);
   $('provider-cancel-form').addEventListener('click', closeProviderForm);
+  for (const fieldId of ['provider-label', 'provider-base-url', 'provider-model']) {
+    // Typing clears the field-level error state immediately.
+    $(fieldId).addEventListener('input', () => $(fieldId).setAttribute?.('aria-invalid', 'false'));
+  }
   $('provider-revert').addEventListener('click', revertProviderDraft);
   $('provider-save-changes').addEventListener('click', () => { saveProviderDraft(); });
   $('settings-retry')?.addEventListener?.('click', () => { loadSettingsSection().then(renderAll); });

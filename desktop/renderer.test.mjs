@@ -161,12 +161,15 @@ test('appearance choices persist and resolve through settings controls', async (
   renderer.registry.get('theme-dark').click();
   assert.equal(renderer.run('document.documentElement.dataset.theme'), 'dark', 'dark choice applies the dark theme');
   assert.equal(renderer.run('localStorage.getItem("verity-theme")'), 'dark', 'dark choice is persisted');
+  assert.equal(elem(renderer, 'theme-dark').checked, true, 'the selected theme radio is checked');
+  assert.equal(elem(renderer, 'theme-light').checked, false, 'the unselected theme radio is not checked');
   renderer.registry.get('theme-light').click();
   assert.equal(renderer.run('document.documentElement.dataset.theme'), 'light', 'light choice applies the light theme');
   assert.equal(renderer.run('localStorage.getItem("verity-theme")'), 'light', 'light choice is persisted');
   renderer.registry.get('theme-system').click();
   assert.equal(renderer.run('localStorage.getItem("verity-theme")'), 'system', 'system choice is persisted');
   assert.ok(['light', 'dark'].includes(renderer.run('document.documentElement.dataset.theme')), 'system resolves to a concrete theme');
+  assert.equal(elem(renderer, 'theme-system').checked, true, 'system is the checked radio after selection');
 });
 
 test('Pi mode shows the unavailable reason in one line and fixture mode shows nothing', async () => {
@@ -339,9 +342,10 @@ test('opening a file swaps the inspector rail to the file view, and Back returns
 });
 
 // ---------- settings: provider setup, redaction, startup recovery ----------
-// /api/settings is owned by the backend layer and is not implemented on this
-// baseline yet; every settings assertion below runs against an explicit mock
-// of the shared wire contract (real /api/state and /api/threads where noted).
+// /api/settings belongs to the backend layer; every settings assertion below
+// runs against an explicit mock of the shared wire contract via the
+// renderer's fetch seam (MOCKED API evidence; no provider network, no real
+// keys). Unmocked paths hit the real local server for state/threads.
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -439,8 +443,12 @@ test('partial startup failure renders per section with retry and is never mislab
 });
 
 test('when the backend lacks /api/settings the UI reports the mismatch and keeps Settings usable', async () => {
-  // Real server on this baseline serves no /api/settings yet (not mocked).
-  const renderer = await bootedRenderer();
+  // Deliberate 404 for /api/settings only, through the existing fetch-router
+  // seam: the case is pinned against the router, not against whichever
+  // backend a checkout happens to ship, so an old or new server both pass.
+  const renderer = await bootedRenderer({ scenario: makeRouter({
+    get: () => new Response(JSON.stringify({ error: 'no such route' }), { status: 404, headers: { 'content-type': 'application/json' } }),
+  }) });
   await until(() => renderer.run('state.settings.phase') === 'error', 5000, 'settings load to fail');
   assert.equal(rendererText(renderer, 'provider-status'), 'Provider settings unavailable',
     'the composer says the status is unavailable instead of pretending');
@@ -643,4 +651,93 @@ test('the approved spending ceiling saves through the same contract PUT and vali
   await until(() => rendererText(renderer, 'general-error') !== '', 5000, 'validation error');
   assert.ok(rendererText(renderer, 'general-error').includes('positive'), 'zero is refused with guidance');
   assert.equal(puts.length, 1, 'an invalid ceiling sends no request');
+});
+
+test('a staged unsaved key can be cleared alone without touching the saved key', async () => {
+  const puts = [];
+  let stored = { providers: [providerView('p1', { key: true })], defaultProviderId: null, costCeilingUsd: null, credentialStorage: { available: true } };
+  const renderer = await bootedRenderer({ scenario: makeRouter({
+    get: () => jsonResponse(JSON.parse(JSON.stringify(stored))),
+    put: body => {
+      puts.push(JSON.parse(JSON.stringify(body)));
+      // Contract: omitting apiKey preserves the saved key.
+      stored = {
+        providers: body.providers.map(provider => ({
+          ...provider,
+          hasApiKey: Boolean(provider.apiKey) || stored.providers.some(s => s.id === provider.id && s.hasApiKey),
+        })),
+        defaultProviderId: body.defaultProviderId,
+        costCeilingUsd: body.costCeilingUsd,
+        credentialStorage: { available: true },
+      };
+      return jsonResponse(JSON.parse(JSON.stringify(stored)));
+    },
+  }) });
+  await until(() => renderer.run('state.settings.phase') === 'ok', 5000, 'settings to load');
+  await renderer.run('openSettings("providers")');
+  await renderer.run('openProviderForm("p1")');
+  assert.ok(rendererText(renderer, 'key-indicator').includes('saved'), 'the saved-key state is described');
+  elem(renderer, 'provider-api-key').value = 'sk-staged-second';
+  await renderer.run('applyProviderForm()');
+  assert.ok(rendererText(renderer, 'provider-list').includes('key set (unsaved)'), 'the staged key is visible as unsaved');
+  rowElement(renderer, 'clear-key-p1').click();
+  await until(() => !rendererText(renderer, 'provider-list').includes('key set (unsaved)'), 5000, 'staged key cleared');
+  assert.ok(rendererText(renderer, 'provider-list').includes('key saved'), 'the saved key is untouched by the staged clear');
+  elem(renderer, 'provider-save-changes').click();
+  await until(() => puts.length === 1 && renderer.run('state.settings.data.providers[0].hasApiKey') === true,
+    5000, 'the save PUT to settle');
+  assert.ok(!('apiKey' in puts[0].providers[0]), 'clearing the staged key sends no key field, so the saved key survives server-side');
+});
+
+test('the storage banner never renders a double period', async () => {
+  const renderer = await bootedRenderer({ scenario: makeRouter({
+    get: () => jsonResponse({ providers: [], defaultProviderId: null, costCeilingUsd: null, credentialStorage: { available: false, reason: 'keyring locked.' } }),
+  }) });
+  await until(() => renderer.run('state.settings.phase') === 'ok', 5000, 'settings to load');
+  await renderer.run('openSettings("providers")');
+  await until(() => rendererText(renderer, 'cred-status').includes('keyring locked'), 5000, 'storage banner');
+  const banner = rendererText(renderer, 'cred-status');
+  assert.ok(!banner.includes('..'), `no double period in "${banner}"`);
+  assert.ok(banner.endsWith('.'), 'the banner sentence still ends with its own period');
+});
+
+test('a refused provider form flags the empty required fields and typing clears the flag', async () => {
+  const renderer = await bootedRenderer({ scenario: makeRouter({ get: () => jsonResponse(emptySettings()) }) });
+  await until(() => renderer.run('state.settings.phase') === 'ok', 5000, 'settings to load');
+  await renderer.run('openSettings("providers")');
+  await renderer.run('openProviderForm(null)');
+  await renderer.run('applyProviderForm()');
+  assert.ok(rendererText(renderer, 'provider-form-error').includes('required'), 'the refusal is explained');
+  for (const id of ['provider-label', 'provider-base-url', 'provider-model']) {
+    assert.equal(elem(renderer, id).attrs['aria-invalid'], 'true', `${id} is flagged invalid`);
+  }
+  elem(renderer, 'provider-label').value = 'Acme';
+  elem(renderer, 'provider-label').dispatch('input');
+  assert.equal(elem(renderer, 'provider-label').attrs['aria-invalid'], 'false', 'typing clears the flag');
+  elem(renderer, 'provider-base-url').value = 'https://api.acme.dev/v1';
+  elem(renderer, 'provider-model').value = 'acme-model-1';
+  await renderer.run('applyProviderForm()');
+  assert.ok(rendererText(renderer, 'provider-list').includes('Acme'), 'the form applies once the fields are filled');
+  for (const id of ['provider-label', 'provider-base-url', 'provider-model']) {
+    assert.notEqual(elem(renderer, id).attrs['aria-invalid'], 'true', `${id} is no longer flagged`);
+  }
+});
+
+test('closing Settings consumes the opener and refocuses a visible opener, falling back when it disappeared', async () => {
+  const renderer = await bootedRenderer({ scenario: makeRouter({ get: () => jsonResponse(emptySettings()) }) });
+  await until(() => renderer.run('state.settings.phase') === 'ok', 5000, 'settings to load');
+  elem(renderer, 'provider-setup').click();
+  assert.equal(renderer.run('state.settings.open'), true, 'Settings opened from the composer path');
+  await renderer.run('closeSettings()');
+  assert.equal(renderer.run('state.settings.open'), false, 'Settings closed');
+  assert.equal(renderer.run('state.settings.opener'), null, 'the opener is consumed on close');
+  await renderer.run(`
+    var focused = [];
+    state.settings.opener = { hidden: false, focus() { focused.push('visible'); } };
+    restoreSettingsFocus();
+    state.settings.opener = { hidden: true, focus() { focused.push('hidden'); } };
+    restoreSettingsFocus();
+  `);
+  assert.equal(renderer.run('focused.join("|")'), 'visible',
+    'a visible opener is refocused; a disappeared opener falls back instead of being focused');
 });

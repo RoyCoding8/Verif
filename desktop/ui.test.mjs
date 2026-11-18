@@ -62,6 +62,16 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     }
     assert.ok(html.includes('type="password"') && html.includes('autocomplete="new-password"'),
       'the API key is a transient password input, never a saved/auto-filled field');
+    // Theme choices are native radios in a radiogroup so arrow keys move the
+    // selection and the checked radio carries the selected state.
+    assert.ok(html.includes('role="radiogroup"') && html.includes('type="radio" name="appearance"'),
+      'theme choices are native radios in a radiogroup');
+    // Settings text fields use the MD3 outlined field wrapper with floating
+    // labels that keep their for= accessible names.
+    assert.ok(html.includes('class="md-field"'), 'Settings fields use the MD3 outlined field wrapper');
+    for (const fieldId of ['ceiling-input', 'provider-label', 'provider-protocol', 'provider-base-url', 'provider-model', 'provider-api-key']) {
+      assert.match(html, new RegExp(`<label for="${fieldId}"`), `the outlined field label keeps for=${fieldId}`);
+    }
     assert.ok(html.includes('id="ceiling-input"') && html.includes('id="general-save"'), 'General exposes the spending ceiling');
     // Startup recovery and composer status.
     for (const anchor of ['id="boot-notice"', 'id="boot-retry"', 'id="boot-text"', 'id="boot-detail"', 'id="provider-status"', 'id="provider-setup"']) {
@@ -115,6 +125,11 @@ test('the shipped theme is the MD3 token foundation, self-contained offline', as
     }
     // State layers use the official hover/focus/pressed opacities.
     assert.ok(css.includes('color-mix'), 'state layers are applied as color overlays');
+    // The self-hosted Roboto leads the stack so it actually renders.
+    assert.ok(css.includes('--sans: "Roboto", system-ui'), 'Roboto is ahead of system-ui in the base font');
+    // MD3 outlined field metrics: 56px container height.
+    assert.ok(/\.md-field input, \.md-field select\s*{[^}]*height: 56px/.test(css),
+      'MD3 outlined field containers are 56px tall');
     // Packaged runtime must work offline: no CDN or external asset anywhere.
     for (const source of [css, html]) {
       assert.ok(!/https:\/\/[^\s"')]*\.(css|js|woff2?)/.test(source), 'no external stylesheet/script/font URLs');

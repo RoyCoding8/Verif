@@ -177,8 +177,10 @@
 
         <section class="settings-section" id="settings-section-general">
           <div class="settings-field">
-            <label class="settings-label" for="ceiling-input">Approved spending ceiling (USD per run)</label>
-            <input type="number" id="ceiling-input" min="0" step="0.01" inputmode="decimal" placeholder="Unconfigured">
+            <div class="md-field">
+              <input type="number" id="ceiling-input" min="0" step="0.01" inputmode="decimal" placeholder="Unconfigured">
+              <label for="ceiling-input">Approved spending ceiling (USD per run)</label>
+            </div>
             <p class="settings-hint">Paid runs refuse to start without a positive ceiling. Blank leaves spending disabled.</p>
           </div>
           <p class="settings-error" id="general-error" role="alert"></p>
@@ -188,10 +190,10 @@
         <section class="settings-section" id="settings-section-appearance" hidden>
           <div class="settings-field">
             <span class="settings-label" id="appearance-label">Appearance</span>
-            <div class="segmented" role="group" aria-labelledby="appearance-label">
-              <button type="button" id="theme-light">Light</button>
-              <button type="button" id="theme-dark">Dark</button>
-              <button type="button" id="theme-system">System</button>
+            <div class="segmented" role="radiogroup" aria-labelledby="appearance-label">
+              <label class="segment"><input type="radio" name="appearance" id="theme-light" value="light"><span>Light</span></label>
+              <label class="segment"><input type="radio" name="appearance" id="theme-dark" value="dark"><span>Dark</span></label>
+              <label class="segment"><input type="radio" name="appearance" id="theme-system" value="system"><span>System</span></label>
             </div>
           </div>
         </section>
@@ -210,28 +212,38 @@
           </div>
           <form class="provider-form" id="provider-form" hidden>
             <div class="settings-field">
-              <label class="settings-label" for="provider-label">Name</label>
-              <input id="provider-label" autocomplete="off">
+              <div class="md-field">
+                <input id="provider-label" autocomplete="off" placeholder=" ">
+                <label for="provider-label">Name</label>
+              </div>
             </div>
             <div class="settings-field">
-              <label class="settings-label" for="provider-protocol">Protocol</label>
-              <select id="provider-protocol">
-                <option value="openai-completions">OpenAI Chat Completions</option>
-                <option value="openai-responses">OpenAI Responses</option>
-                <option value="anthropic-messages">Anthropic Messages</option>
-              </select>
+              <div class="md-field md-field-select">
+                <select id="provider-protocol">
+                  <option value="openai-completions">OpenAI Chat Completions</option>
+                  <option value="openai-responses">OpenAI Responses</option>
+                  <option value="anthropic-messages">Anthropic Messages</option>
+                </select>
+                <label for="provider-protocol">Protocol</label>
+              </div>
             </div>
             <div class="settings-field">
-              <label class="settings-label" for="provider-base-url">Base URL</label>
-              <input class="mono" id="provider-base-url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
+              <div class="md-field">
+                <input class="mono" id="provider-base-url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
+                <label for="provider-base-url">Base URL</label>
+              </div>
             </div>
             <div class="settings-field">
-              <label class="settings-label" for="provider-model">Model</label>
-              <input class="mono" id="provider-model" autocomplete="off" spellcheck="false">
+              <div class="md-field">
+                <input class="mono" id="provider-model" autocomplete="off" spellcheck="false" placeholder=" ">
+                <label for="provider-model">Model</label>
+              </div>
             </div>
             <div class="settings-field">
-              <label class="settings-label" for="provider-api-key">API key</label>
-              <input type="password" id="provider-api-key" autocomplete="new-password" placeholder="Paste key to set or replace">
+              <div class="md-field">
+                <input type="password" id="provider-api-key" autocomplete="new-password" placeholder="Paste key to set or replace">
+                <label for="provider-api-key">API key</label>
+              </div>
               <span class="settings-hint" id="key-indicator" hidden></span>
             </div>
             <p class="settings-error" id="provider-form-error" role="alert"></p>
