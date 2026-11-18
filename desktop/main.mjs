@@ -10,12 +10,10 @@
 
 import { app, BrowserWindow, safeStorage } from 'electron';
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeKeyHandoffFile } from './keyhandoff.mjs';
+import { deliverKeyHandoff, ensureVaultKey } from './keyhandoff.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const serverScript = join(here, 'server.mjs');
@@ -31,24 +29,20 @@ let quitting = false;
 
 function startBackend(boot) {
   // Run the backend under plain Node even though the parent is Electron.
-  // Credential protection is delivered as exactly one consumed-on-read
-  // handoff file (see keyhandoff.mjs); nothing else traverses the channel.
-  const handoffFile = join(mkdtempSync(join(tmpdir(), 'verity-key-')), 'dek.handoff');
-  writeKeyHandoffFile(handoffFile, {
-    dek: boot.vaultKey.dek ? boot.vaultKey.dek.toString('hex') : null,
-    ...(boot.vaultKey.reason ? { reason: boot.vaultKey.reason } : {}),
-  });
+  // Credential protection is delivered as exactly one JSON line over the
+  // child's stdin (see keyhandoff.mjs); no file, argument, or environment
+  // variable carries key material, and nothing else traverses the channel.
   backend = spawn(process.execPath, [serverScript], {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
       VERITY_DESKTOP_PORT: String(port),
       ...boot.env,
-      VERITY_DESKTOP_KEY_HANDOFF_FILE: handoffFile,
     },
-    stdio: ['ignore', 'inherit', 'inherit'],
+    stdio: ['pipe', 'inherit', 'inherit'],
     windowsHide: true,
   });
+  deliverKeyHandoff(backend, boot.vaultKey);
   backend.on('exit', (code, signal) => {
     backendExit = { code, signal };
     // A crash of the backend kills the shell too; nothing to show without it.
@@ -160,52 +154,16 @@ async function prepareBoot() {
       env.VERITY_DESKTOP_LEGACY_DATA = legacyDir;
     }
   }
-  return { env, vaultKey: await ensureVaultKey(dataDir) };
+  return { env, vaultKey: await ensureBootVaultKey(dataDir) };
 }
 
 // Main owns OS-protected key material: a random data-encryption key wrapped
 // with safeStorage's supported async API at rest, unwrapped only here and
-// handed to the child once over the private pipe. An unwrappable key that
+// handed to the child once over the stdin channel. An unwrappable key that
 // fails is rewrapped; prior settings survive and stored keys are re-entered
 // in Settings.
-async function ensureVaultKey(dataDir) {
-  mkdirSync(dataDir, { recursive: true });
-  const keyFile = join(dataDir, 'vault-key.json');
-  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
-    return { dek: null, reason: 'OS credential protection (safeStorage) is unavailable, so API keys cannot be stored in this installation.' };
-  }
-  const wrap = async dek => (await safeStorage.encryptStringAsync(dek.toString('hex'))).toString('base64');
-  let wrapped;
-  if (existsSync(keyFile)) {
-    try {
-      wrapped = JSON.parse(readFileSync(keyFile, 'utf8')).wrapped;
-    } catch {
-      wrapped = undefined;
-    }
-  }
-  let dek;
-  if (typeof wrapped === 'string') {
-    try {
-      const unwrapped = await safeStorage.decryptStringAsync(Buffer.from(wrapped, 'base64'));
-      if (/^[0-9a-f]{64}$/.test(unwrapped.result)) {
-        dek = Buffer.from(unwrapped.result, 'hex');
-        if (unwrapped.shouldReEncrypt) {
-          // The OS rotated its key; re-wrap so the next boot decrypts cleanly.
-          const temp = join(dataDir, `vault-key.json.${Date.now().toString(36)}.tmp`);
-          writeFileSync(temp, JSON.stringify({ wrapped: await wrap(dek) }));
-          renameSync(temp, keyFile);
-        }
-      }
-    } catch {
-      dek = undefined;
-    }
-  }
-  if (Buffer.isBuffer(dek) && dek.length === 32) return { dek };
-  dek = randomBytes(32);
-  const temp = join(dataDir, `vault-key.json.${Date.now().toString(36)}.tmp`);
-  writeFileSync(temp, JSON.stringify({ wrapped: await wrap(dek) }));
-  renameSync(temp, keyFile);
-  return { dek };
+function ensureBootVaultKey(dataDir) {
+  return ensureVaultKey({ safeStorage, dataDir });
 }
 
 app.whenReady().then(async () => {

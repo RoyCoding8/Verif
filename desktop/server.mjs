@@ -17,10 +17,9 @@ import { createDemo, fixtureWorker } from '../examples/setup.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { runTasks } from '../src/verity.mjs';
 import { OperationalError, ValidationError } from './errors.mjs';
-import { createAesGcmCipher, absentCipher, readKeyHandoffFile } from './keyhandoff.mjs';
+import { absentCipher, createAesGcmCipher, readKeyHandoffStream } from './keyhandoff.mjs';
 import { createSavedRouteRuntime } from './route.mjs';
 import { createSettingsStore } from './settings.mjs';
-import { createVault } from './vault.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(here, 'public');
@@ -28,7 +27,6 @@ const dataDir = process.env.VERITY_DESKTOP_DATA ?? join(here, '.data');
 const threadsFile = join(dataDir, 'threads.json');
 const protectedRef = 'refs/heads/protected';
 
-let vault;
 let providerSettings;
 
 // ---------- durable thread store ----------
@@ -64,18 +62,41 @@ function loadThreads() {
 
 // Conservative preserve/copy migration: the desktop shell asks for it only
 // when the destination is fresh, and neither directory is ever deleted or
-// overwritten here.
+// overwritten here. The copy is staged and published by rename, so a crash
+// mid-migration leaves either the old state or fully copied entries, and
+// abandoned staging is swept best-effort on the next boot.
 function migrateLegacyData() {
   const legacyDir = process.env.VERITY_DESKTOP_LEGACY_DATA;
-  if (!legacyDir || !existsSync(join(legacyDir, 'threads.json')) || existsSync(threadsFile)) return;
+  if (!legacyDir || !existsSync(join(legacyDir, 'threads.json')) || existsSync(threadsFile)) {
+    sweepAbandonedMigrations();
+    return;
+  }
   mkdirSync(dataDir, { recursive: true });
+  const staging = join(dataDir, `.migrating-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  mkdirSync(staging, { recursive: true });
   for (const name of ['threads', 'task-catalog']) {
     const source = join(legacyDir, name);
-    const target = join(dataDir, name);
-    if (existsSync(source) && !existsSync(target)) cpSync(source, target, { recursive: true });
+    if (existsSync(source) && !existsSync(join(dataDir, name))) cpSync(source, join(staging, name), { recursive: true });
   }
-  copyFileSync(join(legacyDir, 'threads.json'), threadsFile);
+  copyFileSync(join(legacyDir, 'threads.json'), join(staging, 'threads.json'));
+  for (const name of readdirSync(staging)) renameSync(join(staging, name), join(dataDir, name));
+  rmSync(staging, { recursive: true, force: true });
   writeJsonAtomic(join(dataDir, '.migrated'), { from: legacyDir, at: Date.now() });
+}
+
+// Only our own abandoned migration staging is a cleanup target, and only
+// when no migration is in progress; live data directories never match the
+// .migrating- prefix.
+function sweepAbandonedMigrations() {
+  if (!existsSync(dataDir)) return;
+  for (const name of readdirSync(dataDir)) {
+    if (!name.startsWith('.migrating-')) continue;
+    try {
+      rmSync(join(dataDir, name), { recursive: true, force: true });
+    } catch {
+      // A dir we cannot delete today is left for a later boot.
+    }
+  }
 }
 
 function emit(event, data) {
@@ -575,11 +596,10 @@ async function handle(request, response) {
 }
 
 export function startServer(port = Number(process.env.VERITY_DESKTOP_PORT ?? 47812), options = {}) {
-  // The cipher is injected by the host process (Electron main via a one-shot
-  // wrapped-DEK handoff) or by tests; headless runs report credential
+  // The cipher comes either from the desktop shell's key handoff (via the
+  // CLI boot path below) or from tests; headless runs report credential
   // storage unavailable instead of falling back to plaintext.
-  vault = createVault({ dataDir, cipher: options.cipher ?? bootVaultCipher() });
-  providerSettings = createSettingsStore({ dataDir, vault });
+  providerSettings = createSettingsStore({ dataDir, cipher: options.cipher ?? absentCipher(HEADLESS_REASON) });
   migrateLegacyData();
   mkdirSync(dataDir, { recursive: true });
   loadThreads();
@@ -592,29 +612,21 @@ export function startServer(port = Number(process.env.VERITY_DESKTOP_PORT ?? 478
   return { server, port, url: `http://127.0.0.1:${port}` };
 }
 
-// The desktop shell delivers a one-shot, OS-protected data-encryption key
-// over a private inherited pipe (see keyhandoff.mjs). A bare
-// `node desktop/server.mjs` process receives none and reports credential
-// storage unavailable; there is deliberately no plaintext fallback.
-function bootVaultCipher() {
-  const file = process.env.VERITY_DESKTOP_KEY_HANDOFF_FILE;
-  if (!file) {
-    return absentCipher(
-      'API keys are protected by the Verity desktop shell (OS keychain via safeStorage); '
-      + 'this backend was started without the shell, so keys cannot be stored.',
-    );
-  }
-  try {
-    const handoff = readKeyHandoffFile(file);
-    if (typeof handoff.dek === 'string') return createAesGcmCipher(handoff.dek);
-    return absentCipher(handoff.reason ?? 'The desktop shell did not deliver credential protection.');
-  } catch (error) {
-    return absentCipher(`The desktop shell did not deliver credential protection (${error.message}); keys cannot be stored.`);
-  }
-}
+
+const HEADLESS_REASON = 'API keys are protected by the Verity desktop shell (OS keychain via safeStorage); '
+  + 'this backend was started without the shell, so keys cannot be stored.';
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const { server } = startServer();
+  // CLI boot path: the desktop shell delivers a one-shot, OS-protected
+  // data-encryption key over the inherited stdin channel (see
+  // keyhandoff.mjs). A bare `node desktop/server.mjs` process receives none
+  // and reports credential storage unavailable; there is deliberately no
+  // plaintext fallback.
+  const handoff = await readKeyHandoffStream(process.stdin);
+  const cipher = typeof handoff.dek === 'string' || Buffer.isBuffer(handoff.dek)
+    ? createAesGcmCipher(handoff.dek)
+    : absentCipher(handoff.reason ?? HEADLESS_REASON);
+  const { server } = startServer(undefined, { cipher });
   server.on('listening', () => {
     console.log('Verity Desktop backend at http://127.0.0.1:' + server.address().port);
   });

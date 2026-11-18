@@ -1,22 +1,29 @@
-// Settings store: non-secret provider routing preferences with full-list
-// replacement semantics. Key material lives only in the vault; settings.json
-// never contains it. Updates validate the whole next state, then change
-// credentials first and settings second, so a failed update leaves the
-// previous provider configuration and keys intact.
+// Provider settings and credential storage: one durable record, one atomic
+// write. The record holds provider metadata and the encrypted credential
+// blobs together, so a multi-provider save that fails mid-encryption, or a
+// persistence failure, leaves both the previous configuration and the
+// previous keys fully intact in memory and on disk. Blobs are ciphertext
+// produced by the injected cipher (OS-protected key material via the
+// desktop shell); views never echo key material.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ValidationError } from './errors.mjs';
+import { ValidationError, OperationalError } from './errors.mjs';
 
-const SETTINGS_FILE = 'settings.json';
+const STORE_FILE = 'settings.json';
+const LEGACY_VAULT_FILE = 'credentials.vault.json';
 export const PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-messages'];
 const MAX_PROVIDERS = 64;
 const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-export function createSettingsStore({ dataDir, vault }) {
-  if (!vault || typeof vault.has !== 'function') throw new TypeError('settings store requires a vault');
-  const file = join(dataDir, SETTINGS_FILE);
-  let state = load(file);
+export function createSettingsStore({ dataDir, cipher }) {
+  if (typeof dataDir !== 'string' || dataDir.length === 0) throw new TypeError('settings store requires a dataDir');
+  if (!cipher || typeof cipher.encrypt !== 'function' || typeof cipher.decrypt !== 'function'
+    || typeof cipher.available !== 'boolean') {
+    throw new TypeError('settings store requires a cipher with available/encrypt/decrypt');
+  }
+  const file = join(dataDir, STORE_FILE);
+  let state = load(file, join(dataDir, LEGACY_VAULT_FILE));
 
   let queue = Promise.resolve();
   const serialized = operation => {
@@ -25,14 +32,19 @@ export function createSettingsStore({ dataDir, vault }) {
     return run;
   };
 
-  function persist() {
+  function persist(next) {
     mkdirSync(dataDir, { recursive: true });
-    const temp = join(dataDir, `.${SETTINGS_FILE}.${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.tmp`);
-    writeFileSync(temp, JSON.stringify({ version: 1, ...state }, null, 2));
+    const temp = join(dataDir, `.${STORE_FILE}.${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.tmp`);
+    writeFileSync(temp, JSON.stringify({ version: 2, ...next }, null, 2));
     renameSync(temp, file);
   }
 
   return {
+    status() {
+      return cipher.available ? { available: true } : { available: false, reason: cipher.reason };
+    },
+
+    // Fully redacted view: ids and key presence only, never key material.
     view() {
       return {
         providers: state.providers.map(provider => ({
@@ -41,11 +53,11 @@ export function createSettingsStore({ dataDir, vault }) {
           protocol: provider.protocol,
           baseUrl: provider.baseUrl,
           modelId: provider.modelId,
-          hasApiKey: vault.has(provider.id),
+          hasApiKey: hasCredential(provider.id),
         })),
         defaultProviderId: state.defaultProviderId,
         costCeilingUsd: state.costCeilingUsd,
-        credentialStorage: vault.status(),
+        credentialStorage: this.status(),
       };
     },
 
@@ -56,33 +68,59 @@ export function createSettingsStore({ dataDir, vault }) {
       if (!provider) return null;
       return {
         ...provider,
-        apiKey: await vault.get(provider.id),
-        keyStored: vault.has(provider.id),
+        apiKey: await readCredential(provider.id),
+        keyStored: hasCredential(provider.id),
         ceilingUsd: state.costCeilingUsd,
       };
     },
 
+    // The next state is computed and encrypted in memory first; only a fully
+    // encrypted state reaches the single atomic write. Any failure before
+    // that write leaves state (memory and disk) exactly as it was.
     update(input) {
       return serialized(async () => {
         const next = validate(input); // throws ValidationError before anything changes
         const keep = new Set(next.providers.map(provider => provider.id));
-
-        // Credential changes first: their failure must not touch settings.
+        const credentials = { ...state.credentials };
         for (const provider of next.providers) {
-          if (provider.apiKey !== undefined) await vault.set(provider.id, provider.apiKey);
+          if (provider.apiKey !== undefined) {
+            if (!cipher.available) {
+              throw new OperationalError(
+                `credential storage is unavailable, so the key for ${provider.id} cannot be saved: ${cipher.reason}`);
+            }
+            credentials[provider.id] = await cipher.encrypt(provider.apiKey);
+          }
         }
-        await vault.retain([...keep]); // full-list replacement: drop removed entries' keys
-        const state2 = {
+        for (const id of Object.keys(credentials)) {
+          if (!keep.has(id)) delete credentials[id]; // full-list replacement
+        }
+        const nextState = {
           providers: next.providers.map(({ apiKey, ...rest }) => rest),
           defaultProviderId: next.defaultProviderId,
           costCeilingUsd: next.costCeilingUsd,
+          credentials,
         };
-        state = state2;
-        persist();
+        persist(nextState);
+        state = nextState;
         return this.view();
       });
     },
   };
+
+  function hasCredential(id) {
+    return typeof state.credentials[id] === 'string';
+  }
+
+  // Unreadable blobs surface as absent: never as an error carrying material.
+  async function readCredential(id) {
+    const blob = state.credentials[id];
+    if (typeof blob !== 'string') return undefined;
+    try {
+      return await cipher.decrypt(blob);
+    } catch {
+      return undefined;
+    }
+  }
 }
 
 function isHttpUrl(value) {
@@ -148,14 +186,59 @@ function validate(input) {
   };
 }
 
-function load(file) {
+// Loading is conservative: a version-2 record wins outright; a legacy
+// version-1 record adopts matching entries from the untouched legacy vault
+// file (same DEK) and both legacy files stay on disk until the first
+// successful update writes version 2. Nothing is ever deleted on load.
+function load(file, legacyVaultFile) {
+  let metadata;
+  let credentials = {};
+  let sawRecord = false;
+  let isVersion2 = false;
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8'));
-    return sanitize(raw);
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      sawRecord = true;
+      metadata = sanitize(raw);
+      isVersion2 = raw.version === 2;
+      if (isVersion2 && raw.credentials && typeof raw.credentials === 'object'
+        && !Array.isArray(raw.credentials)) {
+        for (const [id, blob] of Object.entries(raw.credentials)) {
+          if (typeof blob === 'string') credentials[id] = blob;
+        }
+      }
+    }
   } catch {
-    // Absent or unreadable settings start empty; the file is only written on
-    // a successful update, so a corrupt file is never silently destroyed.
-    return { providers: [], defaultProviderId: null, costCeilingUsd: null };
+    // An absent or unreadable store starts empty; it is only rewritten on a
+    // successful update, so a corrupt file is never silently destroyed.
+  }
+  if (!sawRecord || !isVersion2) {
+    // Legacy layout: credentials live in the separate vault file.
+    credentials = { ...readLegacyEntries(legacyVaultFile, metadata), ...credentials };
+  }
+  return {
+    providers: metadata?.providers ?? [],
+    defaultProviderId: metadata?.defaultProviderId ?? null,
+    costCeilingUsd: metadata?.costCeilingUsd ?? null,
+    credentials,
+  };
+}
+
+function readLegacyEntries(file, metadata) {
+  if (!metadata || metadata.providers.length === 0 || !existsSync(file)) return {};
+  const known = new Set(metadata.providers.map(provider => provider.id));
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    const entries = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw.entries : null;
+    if (!entries || typeof entries !== 'object') return {};
+    const adopted = {};
+    for (const [id, blob] of Object.entries(entries)) {
+      if (known.has(id) && typeof blob === 'string') adopted[id] = blob;
+    }
+    return adopted;
+  } catch {
+    // An unreadable legacy vault is left exactly as it is on disk.
+    return {};
   }
 }
 

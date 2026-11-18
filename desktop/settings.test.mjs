@@ -177,7 +177,8 @@ describe('PUT /api/settings validation and redaction', () => {
     const after = (await getJson(backend.base, '/api/settings')).body;
     assert.deepEqual(after, before, 'a failed secret save must preserve previous settings');
     assert.equal(readFileSync(join(dataDir, 'settings.json'), 'utf8'), settingsBefore);
-    assert.ok(!existsSync(join(dataDir, 'credentials.vault.json')), 'no vault file is created by a refused write');
+    assert.ok(!existsSync(join(dataDir, 'credentials.vault.json')) && !existsSync(join(dataDir, 'vault-key.json')),
+      'a refused write creates no credential record and no key-custody file');
   });
 
   test('an oversized settings body is refused with 413', async () => {
@@ -213,6 +214,45 @@ describe('PUT /api/settings validation and redaction', () => {
     assert.equal(thread.status, 403);
     const state = await getJson(backend.base, '/api/state');
     assert.deepEqual(state.body.threads, []);
+  });
+});
+
+describe('key channel fail-closed behavior', () => {
+  test('junk on the key channel is consumed once and the backend stays up, unavailable', async () => {
+    const dataDir = freshDataDir();
+    const env = { ...process.env, VERITY_DESKTOP_DATA: dataDir, VERITY_DESKTOP_PORT: '0' };
+    for (const name of ['VERITY_COST_CEILING_USD', 'VERITY_APP_PROVIDER', 'VERITY_APP_MODEL',
+      'VERITY_EVAL_PROVIDER', 'VERITY_EVAL_MODEL', 'VERITY_DESKTOP_KEY_HANDOFF_FD',
+      'VERITY_DESKTOP_LEGACY_DATA']) delete env[name];
+    const child = spawn(process.execPath, [serverEntry], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin.end('this is not a key handoff\n');
+    try {
+      const base = await new Promise((resolvePort, reject) => {
+        let out = '';
+        const timer = setTimeout(() => reject(new Error(`backend did not start in 30s; stdout=${out}`)), 30_000);
+        child.stdout.on('data', chunk => {
+          out += chunk;
+          const match = out.match(/http:\/\/127\.0\.0\.1:(\d+)/);
+          if (match) { clearTimeout(timer); resolvePort(`http://127.0.0.1:${match[1]}`); }
+        });
+        child.on('exit', code => { clearTimeout(timer); reject(new Error(`backend exited with ${code}`)); });
+      });
+      const view = (await getJson(base, '/api/settings')).body;
+      assert.equal(view.credentialStorage.available, false);
+      assert.match(view.credentialStorage.reason, /handoff|shell|protection/i,
+        'an undelivered key is reported, not pretended');
+      const rejected = await putJson(base, {
+        providers: [{ id: 'p1', label: 'P', protocol: 'openai-completions', baseUrl: 'https://a.example.com', modelId: 'm', apiKey: 'sk-x' }],
+        defaultProviderId: null,
+        costCeilingUsd: null,
+      });
+      assert.equal(rejected.status, 503, 'secret persistence fails closed');
+      assert.equal((await getJson(base, '/api/state')).status, 200, 'the backend stays alive after junk input');
+    } finally {
+      const exited = new Promise(done => child.once('exit', done));
+      child.kill();
+      await exited;
+    }
   });
 });
 

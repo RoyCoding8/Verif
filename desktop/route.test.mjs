@@ -69,8 +69,8 @@ const provider = (id, protocol, overrides = {}) => ({
 });
 const settingsBody = (providers, defaultProviderId, costCeilingUsd = 2) =>
   ({ providers, defaultProviderId, costCeilingUsd });
-const vaultFile = join(dataDir, 'credentials.vault.json');
-const blob = () => JSON.parse(readFileSync(vaultFile, 'utf8')).entries;
+const storeFile = join(dataDir, 'settings.json');
+const blob = () => JSON.parse(readFileSync(storeFile, 'utf8')).credentials;
 
 after(() => new Promise(done => server.close(() => done())));
 
@@ -81,7 +81,7 @@ test('three SDK protocols register from saved settings, and no key material leak
   assert.equal(accepted.status, 200);
   assert.equal(accepted.body.providers[0].hasApiKey, true);
   assert.ok(!JSON.stringify(accepted.body).includes(KEY), 'the settings view must not echo the key');
-  for (const file of ['settings.json', 'credentials.vault.json']) {
+  for (const file of ['settings.json']) {
     assert.ok(!readFileSync(join(dataDir, file), 'utf8').includes(KEY), `${file} must not contain plaintext key material`);
   }
 
@@ -140,7 +140,7 @@ test('an omitted or empty apiKey preserves the stored blob, a new key replaces i
   assert.equal(blob()['fake-0'], before, 'an empty apiKey preserves the stored credential');
   await putSettings(settingsBody([provider('fake-0', 'openai-completions', { apiKey: KEY2 })], 'fake-0'));
   assert.notEqual(blob()['fake-0'], before, 'a new key replaces the stored credential');
-  assert.ok(!readFileSync(vaultFile, 'utf8').includes(KEY2));
+  assert.ok(!readFileSync(storeFile, 'utf8').includes(KEY2));
 });
 
 test('deleting an entry removes its stored credential', async () => {
@@ -152,8 +152,7 @@ test('deleting an entry removes its stored credential', async () => {
 
 test('a failed secret save preserves previous settings and keys', async () => {
   const viewBefore = (await getJson('/api/settings')).body;
-  const vaultBefore = readFileSync(vaultFile, 'utf8');
-  const settingsFileBefore = readFileSync(join(dataDir, 'settings.json'), 'utf8');
+  const storeBefore = readFileSync(storeFile, 'utf8');
   cipher.failNext = true;
   const rejected = await putSettings(settingsBody(
     [provider('fake-0', 'openai-completions', { apiKey: KEY }), provider('new-prov', 'anthropic-messages', { apiKey: KEY })],
@@ -163,9 +162,8 @@ test('a failed secret save preserves previous settings and keys', async () => {
   assert.match(rejected.body.error, /simulated secret-save failure/);
   cipher.failNext = false;
   assert.deepEqual((await getJson('/api/settings')).body, viewBefore, 'settings are preserved');
-  assert.equal(readFileSync(vaultFile, 'utf8'), vaultBefore, 'the vault file is untouched');
-  assert.equal(readFileSync(join(dataDir, 'settings.json'), 'utf8'), settingsFileBefore,
-    'the durable settings bytes are untouched by a failed secret save');
+  assert.equal(readFileSync(storeFile, 'utf8'), storeBefore,
+    'the durable record is untouched by a failed secret save');
 });
 
 test('invalid input returns 400 and preserves prior settings', async () => {
