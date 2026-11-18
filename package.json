@@ -10,6 +10,7 @@
     "verity": "./src/cli.mjs"
   },
   "scripts": {
+    "pretest": "npm run build:material",
     "test": "node --test test/*.test.mjs desktop/*.test.mjs",
     "demo": "node examples/run.mjs",
     "build:material": "node desktop/ui/material.mjs",
