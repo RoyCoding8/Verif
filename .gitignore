@@ -3,6 +3,8 @@
 /node_modules/
 /.verity/
 /desktop/.data/
+/dist/
+/out/
 
 # local-only runtime noise, never part of the deliverable
 __pycache__/

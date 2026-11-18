@@ -19,7 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const serverScript = join(here, 'server.mjs');
 const port = Number(process.env.VERITY_DESKTOP_PORT ?? 47812);
 const url = `http://127.0.0.1:${port}`;
-const smoke = process.argv.includes('--smoke');
+const smoke = process.argv.includes('--smoke') || process.env.VERITY_SMOKE === '1';
 
 const ANCHORS = ['#app', '.sidebar', '.transcript', '.composer', '.context', '#thread-list'];
 
