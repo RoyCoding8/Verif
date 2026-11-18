@@ -28,6 +28,7 @@
     "typebox": "1.3.27"
   },
   "devDependencies": {
+    "@material/material-color-utilities": "0.4.0",
     "@material/web": "2.5.0",
     "electron": "45.3.2",
     "electron-builder": "26.18.0",
