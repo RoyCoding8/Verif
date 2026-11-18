@@ -6,6 +6,9 @@
 /dist/
 /out/
 
+# generated Material Web bundle (npm run build:material)
+/desktop/public/material.js
+
 # local-only runtime noise, never part of the deliverable
 __pycache__/
 *.py[cod]

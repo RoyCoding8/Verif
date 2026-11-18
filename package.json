@@ -12,9 +12,14 @@
   "scripts": {
     "test": "node --test test/*.test.mjs desktop/*.test.mjs",
     "demo": "node examples/run.mjs",
+    "build:material": "node desktop/ui/material.mjs",
+    "preapp": "npm run build:material",
     "app": "electron desktop/main.mjs",
+    "presmoke": "npm run build:material",
     "smoke": "node desktop/smoke.mjs",
+    "prepack:dir": "npm run build:material",
     "pack:dir": "electron-builder --dir --win --x64",
+    "predist:win": "npm run build:material",
     "dist:win": "electron-builder --win nsis --x64",
     "dist": "npm run dist:win"
   },
@@ -23,8 +28,10 @@
     "typebox": "1.3.27"
   },
   "devDependencies": {
+    "@material/web": "2.5.0",
     "electron": "45.3.2",
-    "electron-builder": "26.18.0"
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2"
   },
   "build": {
     "appId": "com.verity.desktop",
