@@ -130,35 +130,35 @@ test('index.html ships every DOM anchor the shell and composer contract require'
   });
 });
 
-test('the shipped theme is the MD3 token foundation, self-contained offline', async () => {
+test('the MD3 palette is emitted by the generated bundle, never hand-authored, offline', async () => {
   await withServer(async base => {
     const css = await (await fetch(base + '/style.css')).text();
     const html = await (await fetch(base + '/')).text();
-    // Official MD3 color-role token names from material-web tokens/_md-sys-color.scss.
-    for (const role of ['--md-sys-color-primary', '--md-sys-color-on-primary', '--md-sys-color-primary-container',
-      '--md-sys-color-secondary-container', '--md-sys-color-error', '--md-sys-color-error-container',
-      '--md-sys-color-surface-container-lowest', '--md-sys-color-surface-container-low', '--md-sys-color-surface-container',
-      '--md-sys-color-surface-container-high', '--md-sys-color-surface-container-highest', '--md-sys-color-on-surface',
-      '--md-sys-color-on-surface-variant', '--md-sys-color-outline', '--md-sys-color-outline-variant']) {
-      assert.ok(css.includes(role + ':'), `style.css defines ${role} in :root`);
-      const darkStart = css.indexOf('[data-theme="dark"]');
-      assert.ok(css.slice(darkStart).includes(role), `the dark scheme redefines ${role}`);
+    const material = await (await fetch(base + '/material.js')).text();
+    // Provenance gate: the MD3 color roles come from the official Material Color
+    // Utilities palette generated into the bundle at build time. style.css must
+    // hand-author no --md-sys-color-* role, so a copied table can never shadow
+    // (or contradict) the emitted colors the renderer actually uses.
+    assert.ok(!/^\s*--md-sys-color-[a-z-]+\s*:/m.test(css),
+      'style.css defines no hand-authored --md-sys-color-* role that could shadow the generated palette');
+    // Emitted (live) roles: the served bundle carries the generated light and
+    // dark schemes its adopted stylesheet provides to the app.
+    for (const role of ['primary', 'on-primary', 'surface', 'on-surface', 'surface-container', 'outline-variant']) {
+      assert.ok(material.includes(`--md-sys-color-${role}:`), `the generated bundle emits --md-sys-color-${role}`);
     }
-    // Scrim and shadow are scheme-independent: defined once from the core set.
-    for (const role of ['--md-sys-color-scrim', '--md-sys-color-shadow']) {
-      assert.ok(css.includes(role + ':'), `style.css defines ${role} in :root`);
+    assert.ok(material.includes('[data-theme'), 'the generated palette defines a dark scheme alongside light');
+    // App semantic extensions (success/warning) have no MD3 core slot and stay
+    // hand-defined in both schemes.
+    for (const token of ['--md-ext-success', '--md-ext-warning', '--md-ext-success-container']) {
+      assert.ok(css.includes(token + ':'), `style.css defines ${token}`);
     }
-    for (const token of ['--md-sys-shape-corner-full', '--md-sys-shape-corner-extra-large',
-      '--md-sys-elevation-level1', '--md-sys-elevation-level3',
-      '--md-sys-typescale-label-large', '--md-sys-typescale-headline-small', '--md-sys-state-hover']) {
-      assert.ok(css.includes(token), `style.css defines ${token}`);
-    }
-    // State layers use the official hover/focus/pressed opacities.
+    const darkStart = css.indexOf('[data-theme="dark"]');
+    assert.ok(darkStart !== -1 && css.slice(darkStart).includes('--md-ext-warning:'),
+      'the dark scheme redefines the semantic extensions');
+    // State layers are color overlays; the self-hosted Roboto leads the stack so
+    // it actually renders; the hand-rolled outlined-field imitation stays gone.
     assert.ok(css.includes('color-mix'), 'state layers are applied as color overlays');
-    // The self-hosted Roboto leads the stack so it actually renders.
     assert.ok(css.includes('--sans: "Roboto", system-ui'), 'Roboto is ahead of system-ui in the base font');
-    // Every outlined field is a real Material element; the hand-rolled
-    // .md-field imitation is fully retired.
     assert.ok(!css.includes('.md-field'), 'no hand-rolled outlined-field imitation CSS remains');
     // Packaged runtime must work offline: no CDN or external asset anywhere.
     for (const source of [css, html]) {
