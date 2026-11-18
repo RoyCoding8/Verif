@@ -6,7 +6,9 @@
 // and on crash so no backend outlives the shell.
 //
 // `electron desktop/main.mjs --smoke` runs the headless acceptance check:
-// load the page, wait for #app, assert the DOM anchors, print SMOKE OK.
+// load the page, wait for #app, assert the DOM anchors, assert the real
+// Material components are registered and upgraded and the generated MD3
+// color roles resolve in both themes, print SMOKE OK.
 
 import { app, BrowserWindow, safeStorage } from 'electron';
 import { spawn } from 'node:child_process';
@@ -22,6 +24,45 @@ const url = `http://127.0.0.1:${port}`;
 const smoke = process.argv.includes('--smoke') || process.env.VERITY_SMOKE === '1';
 
 const ANCHORS = ['#app', '.sidebar', '.transcript', '.composer', '.context', '#thread-list'];
+
+// Checks run inside the real Chromium page. Every md-* element found in the
+// DOM must come from the locally registered Material bundle, and every
+// interactive Material control must actually upgrade (registered class with a
+// rendered shadow root) — including the Providers controls. The generated MD3
+// theme must be adopted from the served bundle and resolve
+// --md-sys-color-primary in both themes.
+const MATERIAL_CHECK = `(async () => {
+  const materialElements = [...document.querySelectorAll('*')]
+    .filter((element) => element.tagName.toLowerCase().startsWith('md-'));
+  await Promise.all(materialElements.map((element) => element.updateComplete ?? Promise.resolve()).map((pending) => pending.catch(() => {})));
+  const tags = [...new Set(materialElements.map((element) => element.tagName.toLowerCase()))];
+  const result = { tags, unregistered: tags.filter((tag) => !customElements.get(tag)) };
+  result.notUpgraded = [...document.querySelectorAll('md-outlined-text-field, md-outlined-select, md-text-button, md-filled-button')]
+    .filter((element) => {
+      const definition = customElements.get(element.tagName.toLowerCase());
+      return definition !== undefined && (!(element instanceof definition) || !element.shadowRoot);
+    })
+    .map((element) => element.id || element.tagName.toLowerCase());
+  // The generated theme must be adopted from the served bundle itself, not
+  // provided by any other stylesheet.
+  result.themeAdopted = document.adoptedStyleSheets.some((sheet) => {
+    try {
+      return [...sheet.cssRules].some((rule) => rule.cssText.includes('--md-sys-color-primary:'))
+        && [...sheet.cssRules].some((rule) => rule.selectorText === ':root[data-theme="dark"]');
+    } catch { return false; }
+  });
+  const primary = () => getComputedStyle(document.documentElement)
+    .getPropertyValue('--md-sys-color-primary').trim();
+  const previousTheme = document.documentElement.dataset.theme ?? '';
+  document.documentElement.dataset.theme = 'light';
+  const light = primary();
+  document.documentElement.dataset.theme = 'dark';
+  const dark = primary();
+  document.documentElement.dataset.theme = previousTheme;
+  result.lightPrimary = light;
+  result.darkPrimary = dark;
+  return JSON.stringify(result);
+})()`;
 
 let backend = null;
 let backendExit = null;
@@ -115,6 +156,22 @@ async function runSmoke(window) {
     const missing = await assertAnchors(window);
     if (missing.length > 0) {
       for (const anchor of missing) console.error(`SMOKE FAIL missing anchor: ${anchor}`);
+      app.exit(1);
+      return;
+    }
+    const material = JSON.parse(await window.webContents.executeJavaScript(MATERIAL_CHECK));
+    if (material.unregistered.length > 0 || material.notUpgraded.length > 0) {
+      console.error(`SMOKE FAIL material: unregistered=${material.unregistered} notUpgraded=${material.notUpgraded}`);
+      app.exit(1);
+      return;
+    }
+    if (!material.themeAdopted) {
+      console.error('SMOKE FAIL material theme: generated color roles not adopted from /material.js');
+      app.exit(1);
+      return;
+    }
+    if (!material.lightPrimary || !material.darkPrimary || material.lightPrimary === material.darkPrimary) {
+      console.error(`SMOKE FAIL material theme: light=${material.lightPrimary} dark=${material.darkPrimary}`);
       app.exit(1);
       return;
     }

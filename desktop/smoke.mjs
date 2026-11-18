@@ -105,6 +105,17 @@ try {
     await sleep(150);
   }
 
+  // The renderer's Material bundle must be served from the same local origin
+  // as a JS module: a 404, an empty file, or a wrong MIME breaks every
+  // migrated control and the generated theme in the packaged app.
+  const materialResponse = await fetch(`${base}/material.js`, { signal: AbortSignal.timeout(READY_DEADLINE_MS) });
+  if (!materialResponse.ok) throw new Error(`HTTP ${materialResponse.status} /material.js`);
+  if (materialResponse.headers.get('content-type') !== 'text/javascript') {
+    throw new Error(`/material.js served as ${materialResponse.headers.get('content-type')}, not text/javascript`);
+  }
+  const materialBytes = (await materialResponse.arrayBuffer()).byteLength;
+  if (materialBytes < 50_000) throw new Error(`/material.js is only ${materialBytes} bytes`);
+
   const runDeadline = Date.now() + RUN_DEADLINE_MS;
   const created = await api(base, '/api/threads', runDeadline, {
     method: 'POST',
