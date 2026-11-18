@@ -696,7 +696,7 @@ function renderFiles() {
     list.appendChild(row);
   }
   $('file-path').disabled = !thread;
-  $('file-form').querySelector('button').disabled = !thread;
+  $('file-form').querySelector('md-text-button, button').disabled = !thread;
 
   const view = $('file-view');
   const details = $('ctx-details');
@@ -905,7 +905,7 @@ function renderProviderRow(provider, draft) {
   text.appendChild(el('span', 'provider-meta', `${PROTOCOLS[provider.protocol] ?? provider.protocol} · ${provider.modelId}${keyState}`));
   row.appendChild(text);
 
-  const edit = el('button', 'btn-quiet', 'Edit');
+  const edit = el('md-text-button', null, 'Edit');
   edit.type = 'button';
   edit.id = 'edit-' + provider.id;
   edit.addEventListener('click', () => openProviderForm(provider.id));
@@ -914,7 +914,7 @@ function renderProviderRow(provider, draft) {
   // A staged (typed but unsaved) key can be dropped on its own without
   // canceling the other draft edits, and without touching the saved key.
   if (provider.apiKey) {
-    const clearKey = el('button', 'btn-quiet', 'Clear staged key');
+    const clearKey = el('md-text-button', null, 'Clear staged key');
     clearKey.type = 'button';
     clearKey.id = 'clear-key-' + provider.id;
     clearKey.addEventListener('click', () => {
@@ -926,7 +926,7 @@ function renderProviderRow(provider, draft) {
     row.appendChild(clearKey);
   }
 
-  const remove = el('button', 'btn-quiet provider-delete', 'Delete');
+  const remove = el('md-text-button', 'provider-delete', 'Delete');
   remove.type = 'button';
   remove.id = 'delete-' + provider.id;
   remove.addEventListener('click', () => {

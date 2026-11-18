@@ -229,24 +229,6 @@ button {
   white-space: nowrap;
 }
 
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px; height: 40px;
-  border-radius: var(--md-sys-shape-corner-full);
-  color: var(--md-sys-color-on-surface-variant);
-}
-
-.icon-btn:hover {
-  background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent);
-  color: var(--md-sys-color-on-surface);
-}
-.icon-btn:active {
-  background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-pressed) * 100%), transparent);
-}
-.icon-btn:disabled { opacity: 0.4; cursor: default; }
-.icon-btn svg { width: 18px; height: 18px; }
 
 /* One placement model: panes own named areas, collapsed panes own a
    zero-width track via --nav-w / --rail-w. No state may re-template
@@ -423,54 +405,9 @@ button {
 .dot-done { background: var(--md-ext-success); }
 .dot-attention { background: var(--md-sys-color-error); }
 
-/* MD3 filled button: full-corner pill, primary container, label-large text,
-   state layers over the container color (hover 8%, pressed 10%). */
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 40px;
-  padding: 0 24px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-primary);
-  color: var(--md-sys-color-on-primary);
-  font: var(--md-sys-typescale-label-large);
-}
-
-.btn-primary:hover {
-  background: color-mix(in srgb, var(--md-sys-color-on-primary) calc(var(--md-sys-state-hover) * 100%), var(--md-sys-color-primary));
-}
-.btn-primary:active {
-  background: color-mix(in srgb, var(--md-sys-color-on-primary) calc(var(--md-sys-state-pressed) * 100%), var(--md-sys-color-primary));
-}
-.btn-primary:disabled { opacity: 0.45; cursor: default; }
-.btn-block { width: 100%; }
-
-.sidebar .btn-primary {
-  justify-content: flex-start;
-  min-height: 40px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: transparent;
-  color: var(--md-sys-color-on-surface);
-}
-
-.sidebar .btn-primary:hover {
-  background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent);
-}
-
-/* MD3 text button: primary label, hover/pressed state layers on surface. */
-.btn-quiet {
-  min-height: 40px;
-  padding: 0 12px;
-  border-radius: var(--md-sys-shape-corner-full);
-  color: var(--md-sys-color-primary);
-  font: var(--md-sys-typescale-label-large);
-}
-
-.btn-quiet:hover { background: color-mix(in srgb, var(--md-sys-color-primary) calc(var(--md-sys-state-hover) * 100%), transparent); }
-.btn-quiet:active { background: color-mix(in srgb, var(--md-sys-color-primary) calc(var(--md-sys-state-pressed) * 100%), transparent); }
-.btn-quiet:disabled { opacity: 0.5; cursor: default; }
+/* Official @material/web elements own their metrics, state layers and
+   typography; the app stylesheet keeps only placement hooks. */
+.sidebar md-fab { width: 100%; }
 
 .center {
   grid-area: center;
@@ -691,13 +628,6 @@ textarea:focus, select:focus, input:focus {
 
 .composer-spacer { flex: 1 1 auto; }
 
-.btn-run {
-  min-width: 0;
-  min-height: 34px;
-  padding: 0 18px;
-  border-radius: 999px;
-}
-
 .file-view {
   display: flex;
   flex-direction: column;
@@ -717,7 +647,7 @@ textarea:focus, select:focus, input:focus {
   border-bottom: 1px solid var(--md-sys-color-outline-variant);
 }
 
-.file-back { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; }
+.file-back { flex: 0 0 auto; }
 
 .file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
