@@ -229,24 +229,6 @@ button {
   white-space: nowrap;
 }
 
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px; height: 40px;
-  border-radius: var(--md-sys-shape-corner-full);
-  color: var(--md-sys-color-on-surface-variant);
-}
-
-.icon-btn:hover {
-  background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent);
-  color: var(--md-sys-color-on-surface);
-}
-.icon-btn:active {
-  background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-pressed) * 100%), transparent);
-}
-.icon-btn:disabled { opacity: 0.4; cursor: default; }
-.icon-btn svg { width: 18px; height: 18px; }
 
 /* One placement model: panes own named areas, collapsed panes own a
    zero-width track via --nav-w / --rail-w. No state may re-template
@@ -293,37 +275,15 @@ button {
   font: var(--md-sys-typescale-body-small);
 }
 
-.project-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  border-radius: var(--md-sys-shape-corner-small);
-  text-align: left;
-  font-weight: 500;
-}
-
-.project-row:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent); }
+/* Actionable rows are md-list-item (official ripple, focus ring and
+   keyboard activation); only slot content styling stays here. */
 .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-meta { color: var(--md-sys-color-on-surface-variant); }
 
 .thread-list { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; }
 
-.thread-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px 7px 18px;
-  border-radius: 999px;
-  text-align: left;
-}
-
-.thread-row:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent); }
-.thread-row.is-active { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.thread-row .title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+md-list-item.thread-row.is-active { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.thread-row .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-row .count { color: var(--md-sys-color-on-surface-variant); font: var(--md-sys-typescale-body-small); }
 
 .side-foot {
@@ -382,34 +342,9 @@ button {
   color: var(--md-sys-color-on-surface-variant);
 }
 
-/* MD3 menu: surface-container, extra-small corner, level2 elevation,
-   state-layer items. */
-.identity-menu {
-  position: absolute;
-  left: 10px;
-  bottom: calc(100% + 6px);
-  z-index: 40;
-  min-width: 220px;
-  padding: 6px;
-  background: var(--md-sys-color-surface-container);
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  box-shadow: var(--md-sys-elevation-level2);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
+/* The identity menu is an md-menu anchored declaratively to the identity
+   button; only the informational head line styles as content. */
 .identity-menu-head { padding: 4px 8px 6px; }
-
-.identity-item {
-  text-align: left;
-  min-height: 40px;
-  padding: 0 12px;
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  font: var(--md-sys-typescale-label-large);
-}
-
-.identity-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent); }
 
 .dot {
   flex: 0 0 auto;
@@ -423,54 +358,9 @@ button {
 .dot-done { background: var(--md-ext-success); }
 .dot-attention { background: var(--md-sys-color-error); }
 
-/* MD3 filled button: full-corner pill, primary container, label-large text,
-   state layers over the container color (hover 8%, pressed 10%). */
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 40px;
-  padding: 0 24px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-primary);
-  color: var(--md-sys-color-on-primary);
-  font: var(--md-sys-typescale-label-large);
-}
-
-.btn-primary:hover {
-  background: color-mix(in srgb, var(--md-sys-color-on-primary) calc(var(--md-sys-state-hover) * 100%), var(--md-sys-color-primary));
-}
-.btn-primary:active {
-  background: color-mix(in srgb, var(--md-sys-color-on-primary) calc(var(--md-sys-state-pressed) * 100%), var(--md-sys-color-primary));
-}
-.btn-primary:disabled { opacity: 0.45; cursor: default; }
-.btn-block { width: 100%; }
-
-.sidebar .btn-primary {
-  justify-content: flex-start;
-  min-height: 40px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: transparent;
-  color: var(--md-sys-color-on-surface);
-}
-
-.sidebar .btn-primary:hover {
-  background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent);
-}
-
-/* MD3 text button: primary label, hover/pressed state layers on surface. */
-.btn-quiet {
-  min-height: 40px;
-  padding: 0 12px;
-  border-radius: var(--md-sys-shape-corner-full);
-  color: var(--md-sys-color-primary);
-  font: var(--md-sys-typescale-label-large);
-}
-
-.btn-quiet:hover { background: color-mix(in srgb, var(--md-sys-color-primary) calc(var(--md-sys-state-hover) * 100%), transparent); }
-.btn-quiet:active { background: color-mix(in srgb, var(--md-sys-color-primary) calc(var(--md-sys-state-pressed) * 100%), transparent); }
-.btn-quiet:disabled { opacity: 0.5; cursor: default; }
+/* Official @material/web elements own their metrics, state layers and
+   typography; the app stylesheet keeps only placement hooks. */
+.sidebar md-fab { width: 100%; }
 
 .center {
   grid-area: center;
@@ -631,23 +521,6 @@ button {
   flex-direction: column;
 }
 
-.composer-field textarea {
-  border: none;
-  background: transparent;
-  padding: 4px 6px;
-  resize: none;
-  line-height: 1.5;
-  font: var(--md-sys-typescale-body-large);
-}
-
-.composer-field textarea:focus {
-  border: none;
-  outline: none;
-  box-shadow: none;
-}
-
-.composer-field:focus-within { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; border-radius: 12px; }
-
 .composer-row {
   display: flex;
   align-items: center;
@@ -657,32 +530,6 @@ button {
 
 .field { display: flex; flex-direction: column; min-width: 0; }
 
-/* MD3 outlined text field: extra-small corner, 1px outline-variant border,
-   focus raises to the primary color. */
-textarea, select, input {
-  border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  background: var(--md-sys-color-surface);
-  min-height: 40px;
-}
-
-textarea { padding: 9px 12px; resize: none; line-height: 1.4; }
-textarea:hover, select:hover, input:hover {
-  border-color: var(--md-sys-color-on-surface-variant);
-}
-textarea:focus, select:focus, input:focus {
-  border-color: var(--md-sys-color-primary);
-  outline: none;
-  box-shadow: 0 0 0 1px var(--md-sys-color-primary);
-}
-
-.field select {
-  width: 100%;
-  max-width: 280px;
-  padding: 0 8px;
-  font: var(--md-sys-typescale-body-medium);
-}
-
 .mode-note {
   margin: 0;
   color: var(--md-ext-warning);
@@ -690,13 +537,6 @@ textarea:focus, select:focus, input:focus {
 }
 
 .composer-spacer { flex: 1 1 auto; }
-
-.btn-run {
-  min-width: 0;
-  min-height: 34px;
-  padding: 0 18px;
-  border-radius: 999px;
-}
 
 .file-view {
   display: flex;
@@ -714,10 +554,9 @@ textarea:focus, select:focus, input:focus {
   align-items: center;
   gap: 8px;
   padding: 8px 12px 8px 8px;
-  border-bottom: 1px solid var(--md-sys-color-outline-variant);
 }
 
-.file-back { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; }
+.file-back { flex: 0 0 auto; }
 
 .file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -788,43 +627,41 @@ textarea:focus, select:focus, input:focus {
 
 .file-list { display: flex; flex-direction: column; gap: 1px; }
 
-.file-row {
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: var(--md-sys-shape-corner-small);
-  font-family: var(--mono);
-  font-size: 12px;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-row:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent); }
-.file-row.is-active { background: var(--md-sys-color-surface-container-highest); font-weight: 500; }
+md-list-item.file-row { font-family: var(--mono); font-size: 12px; }
+md-list-item.file-row.is-active { background: var(--md-sys-color-surface-container-highest); font-weight: 500; }
 
 .file-open { display: flex; gap: 8px; margin-top: 4px; }
+/* The file-path field keeps a native input: @material/web 2.5.0 text
+   fields never trigger their form's implicit submission on Enter (verified
+   in Chromium), and Enter-to-open is part of this control's contract.
+   Only its metrics mirror the outlined field; the gap is documented in
+   the migration report. */
 .file-open input {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 34px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  background: var(--md-sys-color-surface);
+  font: var(--md-sys-typescale-body-medium);
+}
+.file-open input:hover { border-color: var(--md-sys-color-on-surface-variant); }
+.file-open input:focus {
+  border-color: var(--md-sys-color-primary);
+  outline: none;
+  box-shadow: 0 0 0 1px var(--md-sys-color-primary);
 }
 
-/* MD3 dialog: extra-large corner, surface-container-high, level3 elevation,
-   scrim from the system scrim role. */
+/* md-dialog owns its surface, scrim, shape and elevation. The host only
+   widens the default 560px container so the two-pane Settings layout fits:
+   the surface max-width inherits from the host. */
 .settings-dialog {
-  width: min(760px, calc(100vw - 32px));
+  width: fit-content;
+  max-width: min(920px, calc(100vw - 32px));
+  min-width: min(280px, calc(100vw - 32px));
   height: min(560px, calc(100vh - 48px));
-  padding: 0;
-  border: none;
-  border-radius: var(--md-sys-shape-corner-extra-large);
-  background: var(--md-sys-color-surface-container-high);
-  color: var(--md-sys-color-on-surface);
-  box-shadow: var(--md-sys-elevation-level3);
 }
-
-.settings-dialog::backdrop { background: color-mix(in srgb, var(--md-sys-color-scrim) 32%, transparent); }
 
 .settings-shell {
   display: grid;
@@ -883,61 +720,10 @@ textarea:focus, select:focus, input:focus {
 .settings-head h3 { margin: 0; font: var(--md-sys-typescale-title-medium); }
 
 .settings-section { display: flex; flex-direction: column; gap: 16px; max-width: 560px; min-width: 0; }
+.settings-section > md-filled-button { align-self: flex-start; }
 
 .settings-field { display: flex; flex-direction: column; gap: 8px; }
 
-/* MD3 outlined text field (m3.material.io/components/text-field/overview):
-   56px container, body-large input text, the label floats to the outline
-   notch when the field is focused or holds a value, the focused outline
-   raises to 2px primary, and error replaces both in the error state.
-   Labels keep their for= association, so accessible names are unchanged.
-   Shared with the General ceiling field only until its own migration slice;
-   the Providers form now ships real Material Web controls instead. */
-.md-field { position: relative; display: flex; width: 100%; min-width: 0; }
-
-.md-field input {
-  width: 100%;
-  height: 56px;
-  padding: 0 16px;
-  font: var(--md-sys-typescale-body-large);
-  border: 1px solid var(--md-sys-color-outline);
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  background: transparent;
-}
-
-.md-field input:hover { border-color: var(--md-sys-color-on-surface); }
-
-.md-field input:focus {
-  border-color: var(--md-sys-color-primary);
-  box-shadow: inset 0 0 0 1px var(--md-sys-color-primary);
-  outline: none;
-}
-
-.md-field input:focus-visible { outline: none; }
-
-.md-field input::placeholder { color: transparent; }
-.md-field input:focus::placeholder { color: var(--md-sys-color-on-surface-variant); }
-
-.md-field > label {
-  position: absolute;
-  top: 16px;
-  left: 12px;
-  padding: 0 4px;
-  font: var(--md-sys-typescale-body-large);
-  color: var(--md-sys-color-on-surface-variant);
-  background: var(--md-sys-color-surface-container-high);
-  pointer-events: none;
-  transition: top 100ms ease, font-size 100ms ease, color 100ms ease;
-}
-
-/* A populated field keeps its label in the notch. */
-.md-field:focus-within > label,
-.md-field > input:not(:placeholder-shown) ~ label {
-  top: -8px;
-  font: var(--md-sys-typescale-label-small);
-}
-
-.md-field:focus-within > label { color: var(--md-sys-color-primary); }
 .settings-label { font: var(--md-sys-typescale-label-large); }
 .settings-hint { margin: 0; font: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); }
 .settings-error { margin: 0; font: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); min-height: 1em; }
@@ -1223,17 +1009,11 @@ textarea:focus, select:focus, input:focus {
   .settings-dialog > header { padding-top: 12px; padding-bottom: 12px; }
   .settings-section { padding: 12px; gap: 12px; }
   .settings-body { gap: 12px; }
-  .md-segment { min-width: 0; flex: 1 1 auto; }
   .provider-row { gap: 8px; align-items: flex-start; }
-  .provider-info { min-width: 0; flex: 1 1 100%; }
   .provider-name, .provider-meta { overflow-wrap: anywhere; white-space: normal; }
   .provider-actions { width: 100%; justify-content: flex-end; }
-  .settings-form .form-actions,
   .provider-form-actions { justify-content: stretch; flex-wrap: wrap; }
-  .settings-form .form-actions > button,
-  .provider-form-actions > button { flex: 1 1 auto; }
-  .md-field input,
-  .md-field select { min-width: 0; }
+  .provider-form-actions > * { flex: 1 1 auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

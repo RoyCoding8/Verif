@@ -48,7 +48,12 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     for (const anchor of ['id="identity-btn"', 'aria-haspopup="menu"', 'aria-expanded="false"']) {
       assert.ok(html.includes(anchor), `index.html contains ${anchor}`);
     }
-    assert.match(html, /id="identity-menu"[^>]*hidden/, 'the identity menu ships closed');
+    const menuTag = html.match(/<md-menu[^>]*id="identity-menu"[^>]*>/)?.[0] ?? '';
+    assert.ok(menuTag.includes('anchor="identity-btn"'),
+      'the identity menu anchors declaratively to the identity button');
+    assert.ok(!/\bopen\b/.test(menuTag), 'the identity menu ships closed');
+    assert.ok(html.includes('<md-menu-item id="menu-settings"'),
+      'the Settings entry is a Material menu item');
     for (const anchor of ['id="settings-nav-general"', 'id="settings-nav-appearance"', 'id="settings-nav-providers"', 'id="settings-section-general"', 'id="settings-section-appearance"', 'id="settings-section-providers"']) {
       assert.ok(html.includes(anchor), `index.html contains ${anchor}`);
     }
@@ -77,13 +82,17 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     }
     const formHtml = html.match(/<form[^>]*id="provider-form"[\s\S]*?<\/form>/)?.[0] ?? '';
     assert.ok(!/<input|<select/.test(formHtml), 'the provider form ships no hand-rolled input or select');
+    assert.ok(html.includes('<md-dialog'), 'the settings dialog is a Material dialog');
     // Theme choices are native radios in a radiogroup so arrow keys move the
     // selection and the checked radio carries the selected state.
     assert.ok(html.includes('role="radiogroup"') && html.includes('type="radio" name="appearance"'),
       'theme choices are native radios in a radiogroup');
-    // The General ceiling keeps the shared .md-field wrapper until its slice.
-    assert.ok(html.includes('class="md-field"'), 'the General ceiling keeps the MD3 outlined field wrapper');
-    assert.match(html, /<label for="ceiling-input"/, 'the ceiling label keeps its for= accessible name');
+    // The General ceiling is a real Material numeric text field; no
+    // hand-rolled outlined-field imitation survives its slice.
+    const ceilingTag = html.match(/<md-outlined-text-field[^>]*id="ceiling-input"[^>]*>/)?.[0] ?? '';
+    assert.ok(ceilingTag.includes('type="number"') && ceilingTag.includes('label="Approved spending ceiling'),
+      'the spending ceiling is a Material numeric text field with its label');
+    assert.ok(!/<input[^>]*id="ceiling-input"/.test(html), 'the ceiling ships no hand-rolled input');
     assert.ok(html.includes('id="ceiling-input"') && html.includes('id="general-save"'), 'General exposes the spending ceiling');
     // Startup recovery and composer status.
     for (const anchor of ['id="boot-notice"', 'id="boot-retry"', 'id="boot-text"', 'id="boot-detail"', 'id="provider-status"', 'id="provider-setup"']) {
@@ -102,11 +111,16 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     assert.ok(detailsIndex > contextIndex && detailsIndex < fileIndex,
       'inspector details precede the file view inside the rail');
     assert.ok(!html.includes('id="ctx-title"'), 'inspector does not repeat the thread title');
-    assert.ok(html.includes('<option value="fixture">Demo</option>'),
-      'the task chooser reads Demo while keeping the fixture payload value');
-    assert.ok(html.includes('rows="1"'), 'composer textarea is one row tall');
-    assert.ok(html.includes('aria-label="Task"') && html.includes('aria-label="Mode"'),
-      'composer selects keep accessible names without visible labels');
+    assert.match(html, /<md-select-option value="fixture" headline="Demo" selected>/,
+      'the mode chooser opens on Demo while keeping the fixture payload value');
+    assert.ok(html.includes('<md-outlined-text-field id="goal" type="textarea" rows="1"'),
+      'the composer goal is a Material textarea field, one row tall');
+    for (const [id, label] of [['task', 'Task'], ['mode', 'Mode']]) {
+      const tag = html.match(new RegExp(`<md-outlined-select[^>]*id="${id}"[^>]*>`))?.[0] ?? '';
+      assert.ok(tag.includes(`label="${label}"`), `${id} is a Material outlined select labeled "${label}"`);
+    }
+    assert.ok(html.includes('<md-linear-progress id="run-progress" indeterminate hidden>'),
+      'live runs show an indeterminate Material progress bar');
     assert.ok(html.includes('href="style.css"'), 'index.html links style.css')
     assert.equal(html.split('src="/material.js"').length - 1, 1,
       'index.html references the local Material bundle exactly once');
@@ -143,10 +157,9 @@ test('the shipped theme is the MD3 token foundation, self-contained offline', as
     assert.ok(css.includes('color-mix'), 'state layers are applied as color overlays');
     // The self-hosted Roboto leads the stack so it actually renders.
     assert.ok(css.includes('--sans: "Roboto", system-ui'), 'Roboto is ahead of system-ui in the base font');
-    // MD3 outlined field metrics: 56px container height on the shared
-    // .md-field rules the General ceiling still uses.
-    assert.ok(/\.md-field input\s*{[^}]*height: 56px/.test(css),
-      'MD3 outlined field containers are 56px tall');
+    // Every outlined field is a real Material element; the hand-rolled
+    // .md-field imitation is fully retired.
+    assert.ok(!css.includes('.md-field'), 'no hand-rolled outlined-field imitation CSS remains');
     // Packaged runtime must work offline: no CDN or external asset anywhere.
     for (const source of [css, html]) {
       assert.ok(!/https:\/\/[^\s"')]*\.(css|js|woff2?)/.test(source), 'no external stylesheet/script/font URLs');

@@ -449,14 +449,19 @@ function renderSidebar() {
     return;
   }
   for (const summary of state.summaries) {
-    const row = el('button', 'thread-row');
+    const row = el('md-list-item', 'thread-row');
     row.type = 'button';
     row.classList.toggle('is-active', state.view.kind === 'thread' && state.view.id === summary.id);
     const dot = el('span', 'dot ' + (DOTS[summary.status] ?? 'dot-queued'));
     dot.title = summary.status ?? 'queued';
+    dot.slot = 'start';
     row.appendChild(dot);
-    row.appendChild(el('span', 'title', summary.title || 'Untitled'));
-    row.appendChild(el('span', 'count', String(summary.messages ?? 0)));
+    const title = el('span', 'title', summary.title || 'Untitled');
+    title.slot = 'headline';
+    row.appendChild(title);
+    const count = el('span', 'count', String(summary.messages ?? 0));
+    count.slot = 'end';
+    row.appendChild(count);
     row.addEventListener('click', () => { closePanes(); openThread(summary.id); });
     list.appendChild(row);
   }
@@ -467,15 +472,17 @@ function renderComposer() {
   const previous = select.value;
   select.textContent = '';
   if (!state.tasks.length) {
-    const option = el('option', null, 'No tasks available');
+    const option = document.createElement('md-select-option');
     option.value = '';
+    option.headline = 'No tasks available';
     select.appendChild(option);
     select.disabled = true;
   } else {
     select.disabled = false;
     for (const task of state.tasks) {
-      const option = el('option', null, task.id + ' - ' + task.goal);
+      const option = document.createElement('md-select-option');
       option.value = task.id;
+      option.headline = task.id + ' - ' + task.goal;
       option.title = task.goal;
       select.appendChild(option);
     }
@@ -484,7 +491,7 @@ function renderComposer() {
     else select.value = state.tasks[0].id;
   }
 
-  const piOption = $('mode').querySelector('option[value="pi"]');
+  const piOption = $('mode').querySelector('md-select-option[value="pi"]');
   piOption.disabled = !state.pi.ready;
   piOption.title = state.pi.ready ? 'Runs the real Pi agent loop' : (state.pi.reason ?? 'Pi is not configured');
 
@@ -623,6 +630,7 @@ function renderThreadHead() {
   const [cls, label] = THREAD_CHIPS[status] ?? ['chip-idle', 'Idle'];
   chipEl.className = 'chip ' + cls;
   chipEl.textContent = label;
+  $('run-progress').hidden = status !== 'running';
 }
 
 // ---------- rendering: inspector ----------
@@ -687,16 +695,18 @@ function renderFiles() {
       : 'No thread open.'));
   }
   for (const path of paths) {
-    const row = el('button', 'file-row');
+    const row = el('md-list-item', 'file-row');
     row.type = 'button';
-    row.textContent = path;
+    const label = el('span', null, path);
+    label.slot = 'headline';
+    row.appendChild(label);
     row.title = path;
     row.classList.toggle('is-active', state.files.path === path);
     row.addEventListener('click', () => { closePanes(); openFile(path); });
     list.appendChild(row);
   }
   $('file-path').disabled = !thread;
-  $('file-form').querySelector('button').disabled = !thread;
+  $('file-form').querySelector('md-text-button, button').disabled = !thread;
 
   const view = $('file-view');
   const details = $('ctx-details');
@@ -762,7 +772,7 @@ function openSettings(tab) {
   state.settings.opener = (typeof document !== 'undefined' && document.activeElement) || null;
   closeIdentityMenu(false);
   const dialog = $('settings-dialog');
-  if (typeof dialog.showModal === 'function') dialog.showModal();
+  if (typeof dialog.show === 'function') dialog.show();
   renderSettings();
   const active = $('settings-nav-' + state.settings.tab);
   if (typeof active.focus === 'function') active.focus();
@@ -781,6 +791,9 @@ function restoreSettingsFocus() {
 }
 
 function closeSettings() {
+  // The dialog's close event re-enters here; guard so focus restoration and
+  // draft cleanup run exactly once per open dialog.
+  if (!state.settings.open) return;
   state.settings.open = false;
   const dialog = $('settings-dialog');
   if (typeof dialog.close === 'function' && dialog.open) dialog.close();
@@ -864,8 +877,7 @@ function renderSettingsProviders() {
 
 function renderNoDefaultRow(draft) {
   const row = el('div', 'provider-row provider-row-none');
-  const radio = document.createElement('input');
-  radio.type = 'radio';
+  const radio = document.createElement('md-radio');
   radio.name = 'default-provider';
   radio.value = '';
   radio.id = 'default-none';
@@ -884,8 +896,7 @@ function renderNoDefaultRow(draft) {
 
 function renderProviderRow(provider, draft) {
   const row = el('div', 'provider-row');
-  const radio = document.createElement('input');
-  radio.type = 'radio';
+  const radio = document.createElement('md-radio');
   radio.name = 'default-provider';
   radio.value = provider.id;
   radio.id = 'default-' + provider.id;
@@ -905,7 +916,7 @@ function renderProviderRow(provider, draft) {
   text.appendChild(el('span', 'provider-meta', `${PROTOCOLS[provider.protocol] ?? provider.protocol} · ${provider.modelId}${keyState}`));
   row.appendChild(text);
 
-  const edit = el('button', 'btn-quiet', 'Edit');
+  const edit = el('md-text-button', null, 'Edit');
   edit.type = 'button';
   edit.id = 'edit-' + provider.id;
   edit.addEventListener('click', () => openProviderForm(provider.id));
@@ -914,7 +925,7 @@ function renderProviderRow(provider, draft) {
   // A staged (typed but unsaved) key can be dropped on its own without
   // canceling the other draft edits, and without touching the saved key.
   if (provider.apiKey) {
-    const clearKey = el('button', 'btn-quiet', 'Clear staged key');
+    const clearKey = el('md-text-button', null, 'Clear staged key');
     clearKey.type = 'button';
     clearKey.id = 'clear-key-' + provider.id;
     clearKey.addEventListener('click', () => {
@@ -926,7 +937,7 @@ function renderProviderRow(provider, draft) {
     row.appendChild(clearKey);
   }
 
-  const remove = el('button', 'btn-quiet provider-delete', 'Delete');
+  const remove = el('md-text-button', 'provider-delete', 'Delete');
   remove.type = 'button';
   remove.id = 'delete-' + provider.id;
   remove.addEventListener('click', () => {
@@ -1070,19 +1081,23 @@ async function saveGeneral() {
 }
 
 // ---------- identity menu (bottom-left, opens upward) ----------
+// The Material menu owns its surface, anchor placement (it flips above the
+// bottom-left button) and outside-click dismissal; this only mirrors the
+// trigger's aria-expanded state and the explicit focus contract.
 
 function toggleIdentityMenu(open) {
   const menu = $('identity-menu');
-  const show = open ?? menu.hidden;
-  menu.hidden = !show;
-  $('identity-btn').setAttribute?.('aria-expanded', String(show));
-  if (show) $('menu-settings')?.focus?.();
+  const show = open ?? !menu.open;
+  if (!show) { closeIdentityMenu(false); return; }
+  menu.open = true;
+  $('identity-btn').setAttribute?.('aria-expanded', 'true');
+  $('menu-settings')?.focus?.();
 }
 
 function closeIdentityMenu(refocus) {
   const menu = $('identity-menu');
-  if (menu.hidden) return;
-  menu.hidden = true;
+  if (!menu.open) return;
+  menu.open = false;
   $('identity-btn').setAttribute?.('aria-expanded', 'false');
   if (refocus) $('identity-btn')?.focus?.();
 }
@@ -1163,10 +1178,6 @@ function bindUi() {
   }
   $('settings-close').addEventListener('click', closeSettings);
   $('settings-dialog').addEventListener('close', closeSettings);
-  $('settings-dialog').addEventListener('click', event => {
-    // A click on the dialog itself is a backdrop click; close without losing saved state.
-    if (event.target === $('settings-dialog')) closeSettings();
-  });
   $('general-save').addEventListener('click', () => { saveGeneral(); });
   $('provider-add').addEventListener('click', () => openProviderForm(null));
   $('provider-apply').addEventListener('click', applyProviderForm);
@@ -1206,21 +1217,29 @@ function bindUi() {
   if (typeof document.addEventListener === 'function') {
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
-      if (!$('identity-menu').hidden) {
+      const menu = $('identity-menu');
+      if (menu.open) {
+        // Claim Escape before the menu closes itself mid-bubble so the file
+        // view and panes stay put behind it.
+        event.preventDefault?.();
+        event.stopPropagation?.();
         closeIdentityMenu(true);
         return;
       }
-      if ($('settings-dialog').open) return; // the native dialog handles Escape
+      const active = document.activeElement;
+      // An open Material select dismisses its own menu on this key first.
+      if (active && active.open) return;
+      if ($('settings-dialog').open) return; // the dialog handles Escape
       if (state.files.path) {
         state.files.path = null;
         renderFiles();
         return;
       }
       closePanes();
-    });
+    }, true);
     document.addEventListener('click', event => {
       const menu = $('identity-menu');
-      if (menu.hidden) return;
+      if (!menu.open) return;
       const target = event.target;
       if (target && (menu.contains?.(target) || $('identity-btn').contains?.(target))) return;
       closeIdentityMenu(false);

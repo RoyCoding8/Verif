@@ -606,21 +606,19 @@ test('the identity menu opens upward, closes on Escape and outside click, and re
   const renderer = await bootedRenderer();
   const button = elem(renderer, 'identity-btn');
   const menu = elem(renderer, 'identity-menu');
-  // The stub registry does not parse the markup's hidden attribute; mirror it.
-  menu.hidden = true;
   button.click();
-  assert.equal(menu.hidden, false, 'the identity menu opens from the bottom-left button');
+  assert.equal(menu.open, true, 'the identity menu opens from the bottom-left button');
   assert.equal(button.attrs['aria-expanded'], 'true', 'the button tracks menu state for assistive tech');
   for (const handler of renderer.documentHandlers.keydown ?? []) handler({ key: 'Escape', preventDefault() {} });
-  assert.equal(menu.hidden, true, 'Escape closes the menu');
+  assert.equal(menu.open, false, 'Escape closes the menu');
   button.click();
   for (const handler of renderer.documentHandlers.click ?? []) handler({ target: elem(renderer, 'goal') });
-  assert.equal(menu.hidden, true, 'a click outside the menu closes it');
+  assert.equal(menu.open, false, 'a click outside the menu closes it');
   button.click();
   elem(renderer, 'menu-settings').click();
   assert.equal(renderer.run('state.settings.open'), true, 'the Settings item opens the dialog');
   assert.equal(renderer.run('state.settings.tab'), 'general', 'Settings opens on the General section');
-  assert.equal(menu.hidden, true, 'the menu closes behind the dialog');
+  assert.equal(menu.open, false, 'the menu closes behind the dialog');
   elem(renderer, 'settings-nav-providers').click();
   assert.equal(renderer.run('state.settings.tab'), 'providers', 'the category rail switches sections');
   elem(renderer, 'settings-close').click();
