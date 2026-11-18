@@ -720,6 +720,7 @@ md-list-item.file-row.is-active { background: var(--md-sys-color-surface-contain
 .settings-head h3 { margin: 0; font: var(--md-sys-typescale-title-medium); }
 
 .settings-section { display: flex; flex-direction: column; gap: 16px; max-width: 560px; min-width: 0; }
+.settings-section > md-filled-button { align-self: flex-start; }
 
 .settings-field { display: flex; flex-direction: column; gap: 8px; }
 

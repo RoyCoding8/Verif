@@ -111,8 +111,8 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     assert.ok(detailsIndex > contextIndex && detailsIndex < fileIndex,
       'inspector details precede the file view inside the rail');
     assert.ok(!html.includes('id="ctx-title"'), 'inspector does not repeat the thread title');
-    assert.match(html, /<md-select-option value="fixture" headline="Demo">/,
-      'the mode chooser reads Demo while keeping the fixture payload value');
+    assert.match(html, /<md-select-option value="fixture" headline="Demo" selected>/,
+      'the mode chooser opens on Demo while keeping the fixture payload value');
     assert.ok(html.includes('<md-outlined-text-field id="goal" type="textarea" rows="1"'),
       'the composer goal is a Material textarea field, one row tall');
     for (const [id, label] of [['task', 'Task'], ['mode', 'Mode']]) {
