@@ -881,6 +881,10 @@ function renderNoDefaultRow(draft) {
   radio.name = 'default-provider';
   radio.value = '';
   radio.id = 'default-none';
+  // A wrapping label activates md-radio but names nothing: the host carries its
+  // role through ElementInternals and has no labelable native input inside, so
+  // the accessible name must be set on the element itself.
+  radio.setAttribute('aria-label', 'No default provider');
   radio.checked = draft.defaultProviderId == null;
   radio.addEventListener('change', () => {
     if (radio.checked) { draft.defaultProviderId = null; state.settings.dirty = true; }
@@ -900,6 +904,7 @@ function renderProviderRow(provider, draft) {
   radio.name = 'default-provider';
   radio.value = provider.id;
   radio.id = 'default-' + provider.id;
+  radio.setAttribute('aria-label', `Default provider: ${provider.label}`);
   radio.checked = draft.defaultProviderId === provider.id;
   radio.addEventListener('change', () => {
     if (radio.checked) { draft.defaultProviderId = provider.id; state.settings.dirty = true; }

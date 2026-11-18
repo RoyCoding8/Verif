@@ -555,6 +555,12 @@ test('default selection, deletion, and cancel round-trip through the full-list P
   }) });
   await until(() => renderer.run('state.settings.phase') === 'ok', 5000, 'settings to load');
   await renderer.run('openSettings("providers")');
+  // A wrapping label never names an md-radio (the host carries no labelable
+  // native input), so the name assistive tech reads must be set on the element.
+  assert.equal(rowElement(renderer, 'default-p1').attrs['aria-label'], 'Default provider: Acme',
+    'the provider radio carries its provider-specific accessible name');
+  assert.equal(rowElement(renderer, 'default-none').attrs['aria-label'], 'No default provider',
+    'the no-default radio carries its own accessible name');
   // Mark p1 as the default through the row's radio control.
   const radio = rowElement(renderer, 'default-p1');
   radio.checked = true;

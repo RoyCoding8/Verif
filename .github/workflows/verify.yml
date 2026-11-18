@@ -27,10 +27,24 @@ jobs:
       - run: npm ci --no-audit --no-fund
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      # npm test serves desktop/public/material.js, which is generated and
+      # gitignored, so the asset must be built on every leg before the tests.
+      - run: npm run build:material
       - run: npm test
         env:
           VERITY_PI_SDK_SMOKE: "1"
       - run: npm run demo
+      # The real Electron Material smoke needs the Electron binary that npm ci
+      # deliberately skipped, so windows installs it here and runs the smoke
+      # against isolated temp state inside desktop/smoke.mjs.
+      - name: Install Electron binary
+        if: runner.os == 'Windows'
+        run: node node_modules/electron/install.js
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: ""
+      - name: Electron Material smoke
+        if: runner.os == 'Windows'
+        run: npm run smoke
       - name: Check independent shadow evaluation
         if: runner.os == 'Linux'
         run: node evaluation/reservation.mjs
