@@ -24,7 +24,7 @@ hosted service.
 ## Development run (from source)
 
 ```sh
-npm install
+npm ci
 npm run app
 ```
 
@@ -57,8 +57,7 @@ packaging tool install required beyond documented prerequisites).
 
 - Node.js 24+ and npm
 - Git 2.38+ on `PATH` (runtime prerequisite; not bundled)
-- Network access for `npm install` and first-time Electron binary download if
-  the pinned Electron runtime is not already cached by electron-builder
+- Network access for `npm ci` and for the first download of the pinned Electron runtime
 - Windows x64 environment to produce the Windows x64 NSIS installer
 
 ### Exact build steps
@@ -66,7 +65,7 @@ packaging tool install required beyond documented prerequisites).
 From the repository/worktree root:
 
 ```sh
-npm install
+npm ci
 npm run dist:win
 ```
 
@@ -141,18 +140,18 @@ existing approval/cost/security rules.
 
 ## Runtime data and behavior
 
-State lives under `<userData>/.verity/` by default (Windows:
-`%APPDATA%\Verity\.verity\`, from Electron `app.getPath('userData')`), a
-writable per-user location. Override with `VERITY_DESKTOP_DATA` for an isolated
-run.
+State lives under `<userData>/desktop-data` by default (Windows:
+`%APPDATA%\Verity\desktop-data`, where `<userData>` is Electron
+`app.getPath('userData')`), a writable per-user location. Override with
+`VERITY_DESKTOP_DATA` to use a different Verity data root.
 
 ```text
-<userData>/.verity/
-  desktop-settings.json   provider credentials and selected model
-  desktop-state.json      thread index (root, project, protected head, messages)
-  repos/<name>.git        bare, thread-local integration repositories
-  task-catalog/           materialization of the demo project template plus
-                          cached settings (not re-created in a non-empty dir)
+<userData>/desktop-data/
+  settings.json          provider settings and encrypted API keys
+  vault-key.json         encryption key wrapped by Windows
+  threads.json           saved threads and their messages
+  threads/               thread workspaces
+  task-catalog/          demo workspace and cached setup
 ```
 
 Threads survive backend restarts: a fresh boot reloads the store and serves
