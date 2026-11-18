@@ -772,7 +772,7 @@ function openSettings(tab) {
   state.settings.opener = (typeof document !== 'undefined' && document.activeElement) || null;
   closeIdentityMenu(false);
   const dialog = $('settings-dialog');
-  if (typeof dialog.showModal === 'function') dialog.showModal();
+  if (typeof dialog.show === 'function') dialog.show();
   renderSettings();
   const active = $('settings-nav-' + state.settings.tab);
   if (typeof active.focus === 'function') active.focus();
@@ -791,6 +791,9 @@ function restoreSettingsFocus() {
 }
 
 function closeSettings() {
+  // The dialog's close event re-enters here; guard so focus restoration and
+  // draft cleanup run exactly once per open dialog.
+  if (!state.settings.open) return;
   state.settings.open = false;
   const dialog = $('settings-dialog');
   if (typeof dialog.close === 'function' && dialog.open) dialog.close();
@@ -874,8 +877,7 @@ function renderSettingsProviders() {
 
 function renderNoDefaultRow(draft) {
   const row = el('div', 'provider-row provider-row-none');
-  const radio = document.createElement('input');
-  radio.type = 'radio';
+  const radio = document.createElement('md-radio');
   radio.name = 'default-provider';
   radio.value = '';
   radio.id = 'default-none';
@@ -894,8 +896,7 @@ function renderNoDefaultRow(draft) {
 
 function renderProviderRow(provider, draft) {
   const row = el('div', 'provider-row');
-  const radio = document.createElement('input');
-  radio.type = 'radio';
+  const radio = document.createElement('md-radio');
   radio.name = 'default-provider';
   radio.value = provider.id;
   radio.id = 'default-' + provider.id;
@@ -1177,10 +1178,6 @@ function bindUi() {
   }
   $('settings-close').addEventListener('click', closeSettings);
   $('settings-dialog').addEventListener('close', closeSettings);
-  $('settings-dialog').addEventListener('click', event => {
-    // A click on the dialog itself is a backdrop click; close without losing saved state.
-    if (event.target === $('settings-dialog')) closeSettings();
-  });
   $('general-save').addEventListener('click', () => { saveGeneral(); });
   $('provider-add').addEventListener('click', () => openProviderForm(null));
   $('provider-apply').addEventListener('click', applyProviderForm);

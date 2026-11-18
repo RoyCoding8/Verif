@@ -159,8 +159,8 @@
 
   <div class="scrim" id="scrim" hidden></div>
 
-  <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-heading">
-    <div class="settings-shell">
+  <md-dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-heading">
+    <div class="settings-shell" slot="content">
       <aside class="settings-nav" aria-label="Settings sections">
         <h2 id="settings-heading">Settings</h2>
         <button class="settings-tab" id="settings-nav-general" type="button">General</button>
@@ -177,10 +177,8 @@
 
         <section class="settings-section" id="settings-section-general">
           <div class="settings-field">
-            <div class="md-field">
-              <input type="number" id="ceiling-input" min="0" step="0.01" inputmode="decimal" placeholder="Unconfigured">
-              <label for="ceiling-input">Approved spending ceiling (USD per run)</label>
-            </div>
+            <md-outlined-text-field id="ceiling-input" type="number" min="0" step="0.01" inputmode="decimal"
+              label="Approved spending ceiling (USD per run)" placeholder="Unconfigured"></md-outlined-text-field>
             <p class="settings-hint">Paid runs refuse to start without a positive ceiling. Blank leaves spending disabled.</p>
           </div>
           <p class="settings-error" id="general-error" role="alert"></p>
@@ -240,7 +238,7 @@
         </section>
       </div>
     </div>
-  </dialog>
+  </md-dialog>
 </div>
 <script type="module" src="/material.js"></script>
 <script src="app.js" defer></script>

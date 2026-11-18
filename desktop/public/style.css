@@ -723,58 +723,6 @@ md-list-item.file-row.is-active { background: var(--md-sys-color-surface-contain
 
 .settings-field { display: flex; flex-direction: column; gap: 8px; }
 
-/* MD3 outlined text field (m3.material.io/components/text-field/overview):
-   56px container, body-large input text, the label floats to the outline
-   notch when the field is focused or holds a value, the focused outline
-   raises to 2px primary, and error replaces both in the error state.
-   Labels keep their for= association, so accessible names are unchanged.
-   Shared with the General ceiling field only until its own migration slice;
-   the Providers form now ships real Material Web controls instead. */
-.md-field { position: relative; display: flex; width: 100%; min-width: 0; }
-
-.md-field input {
-  width: 100%;
-  height: 56px;
-  padding: 0 16px;
-  font: var(--md-sys-typescale-body-large);
-  border: 1px solid var(--md-sys-color-outline);
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  background: transparent;
-}
-
-.md-field input:hover { border-color: var(--md-sys-color-on-surface); }
-
-.md-field input:focus {
-  border-color: var(--md-sys-color-primary);
-  box-shadow: inset 0 0 0 1px var(--md-sys-color-primary);
-  outline: none;
-}
-
-.md-field input:focus-visible { outline: none; }
-
-.md-field input::placeholder { color: transparent; }
-.md-field input:focus::placeholder { color: var(--md-sys-color-on-surface-variant); }
-
-.md-field > label {
-  position: absolute;
-  top: 16px;
-  left: 12px;
-  padding: 0 4px;
-  font: var(--md-sys-typescale-body-large);
-  color: var(--md-sys-color-on-surface-variant);
-  background: var(--md-sys-color-surface-container-high);
-  pointer-events: none;
-  transition: top 100ms ease, font-size 100ms ease, color 100ms ease;
-}
-
-/* A populated field keeps its label in the notch. */
-.md-field:focus-within > label,
-.md-field > input:not(:placeholder-shown) ~ label {
-  top: -8px;
-  font: var(--md-sys-typescale-label-small);
-}
-
-.md-field:focus-within > label { color: var(--md-sys-color-primary); }
 .settings-label { font: var(--md-sys-typescale-label-large); }
 .settings-hint { margin: 0; font: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); }
 .settings-error { margin: 0; font: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); min-height: 1em; }
@@ -1060,17 +1008,11 @@ md-list-item.file-row.is-active { background: var(--md-sys-color-surface-contain
   .settings-dialog > header { padding-top: 12px; padding-bottom: 12px; }
   .settings-section { padding: 12px; gap: 12px; }
   .settings-body { gap: 12px; }
-  .md-segment { min-width: 0; flex: 1 1 auto; }
   .provider-row { gap: 8px; align-items: flex-start; }
-  .provider-info { min-width: 0; flex: 1 1 100%; }
   .provider-name, .provider-meta { overflow-wrap: anywhere; white-space: normal; }
   .provider-actions { width: 100%; justify-content: flex-end; }
-  .settings-form .form-actions,
   .provider-form-actions { justify-content: stretch; flex-wrap: wrap; }
-  .settings-form .form-actions > button,
-  .provider-form-actions > button { flex: 1 1 auto; }
-  .md-field input,
-  .md-field select { min-width: 0; }
+  .provider-form-actions > * { flex: 1 1 auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -82,13 +82,17 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     }
     const formHtml = html.match(/<form[^>]*id="provider-form"[\s\S]*?<\/form>/)?.[0] ?? '';
     assert.ok(!/<input|<select/.test(formHtml), 'the provider form ships no hand-rolled input or select');
+    assert.ok(html.includes('<md-dialog'), 'the settings dialog is a Material dialog');
     // Theme choices are native radios in a radiogroup so arrow keys move the
     // selection and the checked radio carries the selected state.
     assert.ok(html.includes('role="radiogroup"') && html.includes('type="radio" name="appearance"'),
       'theme choices are native radios in a radiogroup');
-    // The General ceiling keeps the shared .md-field wrapper until its slice.
-    assert.ok(html.includes('class="md-field"'), 'the General ceiling keeps the MD3 outlined field wrapper');
-    assert.match(html, /<label for="ceiling-input"/, 'the ceiling label keeps its for= accessible name');
+    // The General ceiling is a real Material numeric text field; no
+    // hand-rolled outlined-field imitation survives its slice.
+    const ceilingTag = html.match(/<md-outlined-text-field[^>]*id="ceiling-input"[^>]*>/)?.[0] ?? '';
+    assert.ok(ceilingTag.includes('type="number"') && ceilingTag.includes('label="Approved spending ceiling'),
+      'the spending ceiling is a Material numeric text field with its label');
+    assert.ok(!/<input[^>]*id="ceiling-input"/.test(html), 'the ceiling ships no hand-rolled input');
     assert.ok(html.includes('id="ceiling-input"') && html.includes('id="general-save"'), 'General exposes the spending ceiling');
     // Startup recovery and composer status.
     for (const anchor of ['id="boot-notice"', 'id="boot-retry"', 'id="boot-text"', 'id="boot-detail"', 'id="provider-status"', 'id="provider-setup"']) {
@@ -153,10 +157,9 @@ test('the shipped theme is the MD3 token foundation, self-contained offline', as
     assert.ok(css.includes('color-mix'), 'state layers are applied as color overlays');
     // The self-hosted Roboto leads the stack so it actually renders.
     assert.ok(css.includes('--sans: "Roboto", system-ui'), 'Roboto is ahead of system-ui in the base font');
-    // MD3 outlined field metrics: 56px container height on the shared
-    // .md-field rules the General ceiling still uses.
-    assert.ok(/\.md-field input\s*{[^}]*height: 56px/.test(css),
-      'MD3 outlined field containers are 56px tall');
+    // Every outlined field is a real Material element; the hand-rolled
+    // .md-field imitation is fully retired.
+    assert.ok(!css.includes('.md-field'), 'no hand-rolled outlined-field imitation CSS remains');
     // Packaged runtime must work offline: no CDN or external asset anywhere.
     for (const source of [css, html]) {
       assert.ok(!/https:\/\/[^\s"')]*\.(css|js|woff2?)/.test(source), 'no external stylesheet/script/font URLs');
