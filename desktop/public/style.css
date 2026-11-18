@@ -275,37 +275,15 @@ button {
   font: var(--md-sys-typescale-body-small);
 }
 
-.project-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  border-radius: var(--md-sys-shape-corner-small);
-  text-align: left;
-  font-weight: 500;
-}
-
-.project-row:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent); }
+/* Actionable rows are md-list-item (official ripple, focus ring and
+   keyboard activation); only slot content styling stays here. */
 .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-meta { color: var(--md-sys-color-on-surface-variant); }
 
 .thread-list { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; }
 
-.thread-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px 7px 18px;
-  border-radius: 999px;
-  text-align: left;
-}
-
-.thread-row:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent); }
-.thread-row.is-active { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.thread-row .title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+md-list-item.thread-row.is-active { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.thread-row .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-row .count { color: var(--md-sys-color-on-surface-variant); font: var(--md-sys-typescale-body-small); }
 
 .side-foot {
@@ -364,34 +342,9 @@ button {
   color: var(--md-sys-color-on-surface-variant);
 }
 
-/* MD3 menu: surface-container, extra-small corner, level2 elevation,
-   state-layer items. */
-.identity-menu {
-  position: absolute;
-  left: 10px;
-  bottom: calc(100% + 6px);
-  z-index: 40;
-  min-width: 220px;
-  padding: 6px;
-  background: var(--md-sys-color-surface-container);
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  box-shadow: var(--md-sys-elevation-level2);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
+/* The identity menu is an md-menu anchored declaratively to the identity
+   button; only the informational head line styles as content. */
 .identity-menu-head { padding: 4px 8px 6px; }
-
-.identity-item {
-  text-align: left;
-  min-height: 40px;
-  padding: 0 12px;
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  font: var(--md-sys-typescale-label-large);
-}
-
-.identity-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent); }
 
 .dot {
   flex: 0 0 auto;
@@ -644,7 +597,6 @@ textarea:focus, select:focus, input:focus {
   align-items: center;
   gap: 8px;
   padding: 8px 12px 8px 8px;
-  border-bottom: 1px solid var(--md-sys-color-outline-variant);
 }
 
 .file-back { flex: 0 0 auto; }
@@ -718,20 +670,8 @@ textarea:focus, select:focus, input:focus {
 
 .file-list { display: flex; flex-direction: column; gap: 1px; }
 
-.file-row {
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: var(--md-sys-shape-corner-small);
-  font-family: var(--mono);
-  font-size: 12px;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-row:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) calc(var(--md-sys-state-hover) * 100%), transparent); }
-.file-row.is-active { background: var(--md-sys-color-surface-container-highest); font-weight: 500; }
+md-list-item.file-row { font-family: var(--mono); font-size: 12px; }
+md-list-item.file-row.is-active { background: var(--md-sys-color-surface-container-highest); font-weight: 500; }
 
 .file-open { display: flex; gap: 8px; margin-top: 4px; }
 .file-open input {

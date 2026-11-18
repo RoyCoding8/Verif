@@ -35,15 +35,17 @@
 
         <div class="side-group">
           <div class="side-label">Projects</div>
-          <button class="project-row" id="project-row" type="button">
-            <span class="project-name">Reservation demo</span>
-            <span class="project-meta mono">demo</span>
-          </button>
+          <md-list-item class="project-row" id="project-row" type="button">
+            <span slot="headline" class="project-name">Reservation demo</span>
+            <span slot="end" class="project-meta mono">demo</span>
+          </md-list-item>
         </div>
+
+        <md-divider></md-divider>
 
         <div class="side-group grow">
           <div class="side-label">Threads</div>
-          <div class="thread-list" id="thread-list" aria-label="Threads"></div>
+          <md-list class="thread-list" id="thread-list" aria-label="Threads"></md-list>
         </div>
 
         <div class="side-foot">
@@ -55,12 +57,12 @@
             </span>
             <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
-          <div class="identity-menu" id="identity-menu" role="menu" aria-label="Device menu" hidden>
+          <md-menu id="identity-menu" anchor="identity-btn" aria-label="Device menu">
             <div class="identity-menu-head">
               <span class="identity-sub">Runs locally · no account or sync</span>
             </div>
-            <button class="identity-item" id="menu-settings" role="menuitem" type="button">Settings</button>
-          </div>
+            <md-menu-item id="menu-settings">Settings</md-menu-item>
+          </md-menu>
         </div>
       </div>
     </aside>
@@ -151,6 +153,7 @@
           </md-text-button>
           <span class="mono file-name" id="file-name"></span>
         </header>
+        <md-divider></md-divider>
         <pre class="file-content" id="file-content" tabindex="0"></pre>
       </section>
     </aside>

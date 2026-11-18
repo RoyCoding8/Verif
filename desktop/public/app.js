@@ -449,14 +449,19 @@ function renderSidebar() {
     return;
   }
   for (const summary of state.summaries) {
-    const row = el('button', 'thread-row');
+    const row = el('md-list-item', 'thread-row');
     row.type = 'button';
     row.classList.toggle('is-active', state.view.kind === 'thread' && state.view.id === summary.id);
     const dot = el('span', 'dot ' + (DOTS[summary.status] ?? 'dot-queued'));
     dot.title = summary.status ?? 'queued';
+    dot.slot = 'start';
     row.appendChild(dot);
-    row.appendChild(el('span', 'title', summary.title || 'Untitled'));
-    row.appendChild(el('span', 'count', String(summary.messages ?? 0)));
+    const title = el('span', 'title', summary.title || 'Untitled');
+    title.slot = 'headline';
+    row.appendChild(title);
+    const count = el('span', 'count', String(summary.messages ?? 0));
+    count.slot = 'end';
+    row.appendChild(count);
     row.addEventListener('click', () => { closePanes(); openThread(summary.id); });
     list.appendChild(row);
   }
@@ -687,9 +692,11 @@ function renderFiles() {
       : 'No thread open.'));
   }
   for (const path of paths) {
-    const row = el('button', 'file-row');
+    const row = el('md-list-item', 'file-row');
     row.type = 'button';
-    row.textContent = path;
+    const label = el('span', null, path);
+    label.slot = 'headline';
+    row.appendChild(label);
     row.title = path;
     row.classList.toggle('is-active', state.files.path === path);
     row.addEventListener('click', () => { closePanes(); openFile(path); });
@@ -1070,19 +1077,23 @@ async function saveGeneral() {
 }
 
 // ---------- identity menu (bottom-left, opens upward) ----------
+// The Material menu owns its surface, anchor placement (it flips above the
+// bottom-left button) and outside-click dismissal; this only mirrors the
+// trigger's aria-expanded state and the explicit focus contract.
 
 function toggleIdentityMenu(open) {
   const menu = $('identity-menu');
-  const show = open ?? menu.hidden;
-  menu.hidden = !show;
-  $('identity-btn').setAttribute?.('aria-expanded', String(show));
-  if (show) $('menu-settings')?.focus?.();
+  const show = open ?? !menu.open;
+  if (!show) { closeIdentityMenu(false); return; }
+  menu.open = true;
+  $('identity-btn').setAttribute?.('aria-expanded', 'true');
+  $('menu-settings')?.focus?.();
 }
 
 function closeIdentityMenu(refocus) {
   const menu = $('identity-menu');
-  if (menu.hidden) return;
-  menu.hidden = true;
+  if (!menu.open) return;
+  menu.open = false;
   $('identity-btn').setAttribute?.('aria-expanded', 'false');
   if (refocus) $('identity-btn')?.focus?.();
 }
@@ -1206,21 +1217,29 @@ function bindUi() {
   if (typeof document.addEventListener === 'function') {
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
-      if (!$('identity-menu').hidden) {
+      const menu = $('identity-menu');
+      if (menu.open) {
+        // Claim Escape before the menu closes itself mid-bubble so the file
+        // view and panes stay put behind it.
+        event.preventDefault?.();
+        event.stopPropagation?.();
         closeIdentityMenu(true);
         return;
       }
-      if ($('settings-dialog').open) return; // the native dialog handles Escape
+      const active = document.activeElement;
+      // An open Material select dismisses its own menu on this key first.
+      if (active && active.open) return;
+      if ($('settings-dialog').open) return; // the dialog handles Escape
       if (state.files.path) {
         state.files.path = null;
         renderFiles();
         return;
       }
       closePanes();
-    });
+    }, true);
     document.addEventListener('click', event => {
       const menu = $('identity-menu');
-      if (menu.hidden) return;
+      if (!menu.open) return;
       const target = event.target;
       if (target && (menu.contains?.(target) || $('identity-btn').contains?.(target))) return;
       closeIdentityMenu(false);

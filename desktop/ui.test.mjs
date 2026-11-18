@@ -48,7 +48,12 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     for (const anchor of ['id="identity-btn"', 'aria-haspopup="menu"', 'aria-expanded="false"']) {
       assert.ok(html.includes(anchor), `index.html contains ${anchor}`);
     }
-    assert.match(html, /id="identity-menu"[^>]*hidden/, 'the identity menu ships closed');
+    const menuTag = html.match(/<md-menu[^>]*id="identity-menu"[^>]*>/)?.[0] ?? '';
+    assert.ok(menuTag.includes('anchor="identity-btn"'),
+      'the identity menu anchors declaratively to the identity button');
+    assert.ok(!/\bopen\b/.test(menuTag), 'the identity menu ships closed');
+    assert.ok(html.includes('<md-menu-item id="menu-settings"'),
+      'the Settings entry is a Material menu item');
     for (const anchor of ['id="settings-nav-general"', 'id="settings-nav-appearance"', 'id="settings-nav-providers"', 'id="settings-section-general"', 'id="settings-section-appearance"', 'id="settings-section-providers"']) {
       assert.ok(html.includes(anchor), `index.html contains ${anchor}`);
     }
