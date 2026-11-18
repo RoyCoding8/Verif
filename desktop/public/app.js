@@ -972,12 +972,15 @@ function closeProviderForm() {
   clearProviderKeyInput();
 }
 
+// Material fields own their error state (red outline plus error text, wired
+// to the internal input's aria-invalid), so the form drives that API.
 function setRequiredFieldValidity(invalidIds) {
   const all = ['provider-label', 'provider-base-url', 'provider-model'];
   for (const fieldId of all) {
     const field = $(fieldId);
     const invalid = invalidIds ? invalidIds.includes(fieldId) : false;
-    field.setAttribute?.('aria-invalid', invalid ? 'true' : 'false');
+    field.error = invalid;
+    field.errorText = invalid ? 'Required.' : '';
   }
 }
 
@@ -1169,8 +1172,12 @@ function bindUi() {
   $('provider-apply').addEventListener('click', applyProviderForm);
   $('provider-cancel-form').addEventListener('click', closeProviderForm);
   for (const fieldId of ['provider-label', 'provider-base-url', 'provider-model']) {
-    // Typing clears the field-level error state immediately.
-    $(fieldId).addEventListener('input', () => $(fieldId).setAttribute?.('aria-invalid', 'false'));
+    // Material text fields re-emit the native input event at the host, so
+    // typing clears the field-level error state immediately.
+    $(fieldId).addEventListener('input', () => {
+      $(fieldId).error = false;
+      $(fieldId).errorText = '';
+    });
   }
   $('provider-revert').addEventListener('click', revertProviderDraft);
   $('provider-save-changes').addEventListener('click', () => { saveProviderDraft(); });

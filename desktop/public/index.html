@@ -204,52 +204,37 @@
           <p class="settings-error" id="provider-error" role="alert"></p>
           <div class="provider-list" id="provider-list" aria-label="Configured providers"></div>
           <div class="provider-actions">
-            <button class="btn-quiet" id="provider-add" type="button">Add provider</button>
+            <md-text-button id="provider-add" type="button">Add provider</md-text-button>
             <span class="provider-dirty" id="provider-dirty" hidden>Unsaved changes</span>
             <span class="provider-actions-spacer"></span>
-            <button class="btn-quiet" id="provider-revert" type="button">Cancel</button>
-            <button class="btn-primary" id="provider-save-changes" type="button">Save changes</button>
+            <md-text-button id="provider-revert" type="button">Cancel</md-text-button>
+            <md-filled-button id="provider-save-changes" type="button">Save changes</md-filled-button>
           </div>
           <form class="provider-form" id="provider-form" hidden>
             <div class="settings-field">
-              <div class="md-field">
-                <input id="provider-label" autocomplete="off" placeholder=" ">
-                <label for="provider-label">Name</label>
-              </div>
+              <md-outlined-text-field id="provider-label" label="Name" autocomplete="off"></md-outlined-text-field>
             </div>
             <div class="settings-field">
-              <div class="md-field md-field-select">
-                <select id="provider-protocol">
-                  <option value="openai-completions">OpenAI Chat Completions</option>
-                  <option value="openai-responses">OpenAI Responses</option>
-                  <option value="anthropic-messages">Anthropic Messages</option>
-                </select>
-                <label for="provider-protocol">Protocol</label>
-              </div>
+              <md-outlined-select id="provider-protocol" label="Protocol">
+                <md-select-option value="openai-completions" headline="OpenAI Chat Completions"></md-select-option>
+                <md-select-option value="openai-responses" headline="OpenAI Responses"></md-select-option>
+                <md-select-option value="anthropic-messages" headline="Anthropic Messages"></md-select-option>
+              </md-outlined-select>
             </div>
             <div class="settings-field">
-              <div class="md-field">
-                <input class="mono" id="provider-base-url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
-                <label for="provider-base-url">Base URL</label>
-              </div>
+              <md-outlined-text-field id="provider-base-url" label="Base URL" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1"></md-outlined-text-field>
             </div>
             <div class="settings-field">
-              <div class="md-field">
-                <input class="mono" id="provider-model" autocomplete="off" spellcheck="false" placeholder=" ">
-                <label for="provider-model">Model</label>
-              </div>
+              <md-outlined-text-field id="provider-model" label="Model" autocomplete="off" spellcheck="false"></md-outlined-text-field>
             </div>
             <div class="settings-field">
-              <div class="md-field">
-                <input type="password" id="provider-api-key" autocomplete="new-password" placeholder="Paste key to set or replace">
-                <label for="provider-api-key">API key</label>
-              </div>
+              <md-outlined-text-field id="provider-api-key" type="password" label="API key" autocomplete="new-password" placeholder="Paste key to set or replace"></md-outlined-text-field>
               <span class="settings-hint" id="key-indicator" hidden></span>
             </div>
             <p class="settings-error" id="provider-form-error" role="alert"></p>
             <div class="provider-form-actions">
-              <button class="btn-quiet" id="provider-cancel-form" type="button">Cancel</button>
-              <button class="btn-primary" id="provider-apply" type="button">Apply</button>
+              <md-text-button id="provider-cancel-form" type="button">Cancel</md-text-button>
+              <md-filled-button id="provider-apply" type="button">Apply</md-filled-button>
             </div>
           </form>
         </section>
@@ -257,6 +242,7 @@
     </div>
   </dialog>
 </div>
-<script src="app.js"></script>
+<script type="module" src="/material.js"></script>
+<script src="app.js" defer></script>
 </body>
 </html>

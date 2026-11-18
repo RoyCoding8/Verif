@@ -709,17 +709,18 @@ test('a refused provider form flags the empty required fields and typing clears 
   await renderer.run('applyProviderForm()');
   assert.ok(rendererText(renderer, 'provider-form-error').includes('required'), 'the refusal is explained');
   for (const id of ['provider-label', 'provider-base-url', 'provider-model']) {
-    assert.equal(elem(renderer, id).attrs['aria-invalid'], 'true', `${id} is flagged invalid`);
+    assert.equal(elem(renderer, id).error, true, `${id} shows the Material error state`);
+    assert.ok(elem(renderer, id).errorText, `${id} explains the error in its supporting text`);
   }
   elem(renderer, 'provider-label').value = 'Acme';
   elem(renderer, 'provider-label').dispatch('input');
-  assert.equal(elem(renderer, 'provider-label').attrs['aria-invalid'], 'false', 'typing clears the flag');
+  assert.equal(elem(renderer, 'provider-label').error, false, 'typing clears the flag');
   elem(renderer, 'provider-base-url').value = 'https://api.acme.dev/v1';
   elem(renderer, 'provider-model').value = 'acme-model-1';
   await renderer.run('applyProviderForm()');
   assert.ok(rendererText(renderer, 'provider-list').includes('Acme'), 'the form applies once the fields are filled');
   for (const id of ['provider-label', 'provider-base-url', 'provider-model']) {
-    assert.notEqual(elem(renderer, id).attrs['aria-invalid'], 'true', `${id} is no longer flagged`);
+    assert.equal(elem(renderer, id).error, false, `${id} is no longer flagged`);
   }
 });
 
