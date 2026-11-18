@@ -521,23 +521,6 @@ md-list-item.thread-row.is-active { background: var(--md-sys-color-secondary-con
   flex-direction: column;
 }
 
-.composer-field textarea {
-  border: none;
-  background: transparent;
-  padding: 4px 6px;
-  resize: none;
-  line-height: 1.5;
-  font: var(--md-sys-typescale-body-large);
-}
-
-.composer-field textarea:focus {
-  border: none;
-  outline: none;
-  box-shadow: none;
-}
-
-.composer-field:focus-within { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; border-radius: 12px; }
-
 .composer-row {
   display: flex;
   align-items: center;
@@ -546,32 +529,6 @@ md-list-item.thread-row.is-active { background: var(--md-sys-color-secondary-con
 }
 
 .field { display: flex; flex-direction: column; min-width: 0; }
-
-/* MD3 outlined text field: extra-small corner, 1px outline-variant border,
-   focus raises to the primary color. */
-textarea, select, input {
-  border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: var(--md-sys-shape-corner-extra-small);
-  background: var(--md-sys-color-surface);
-  min-height: 40px;
-}
-
-textarea { padding: 9px 12px; resize: none; line-height: 1.4; }
-textarea:hover, select:hover, input:hover {
-  border-color: var(--md-sys-color-on-surface-variant);
-}
-textarea:focus, select:focus, input:focus {
-  border-color: var(--md-sys-color-primary);
-  outline: none;
-  box-shadow: 0 0 0 1px var(--md-sys-color-primary);
-}
-
-.field select {
-  width: 100%;
-  max-width: 280px;
-  padding: 0 8px;
-  font: var(--md-sys-typescale-body-medium);
-}
 
 .mode-note {
   margin: 0;
@@ -674,27 +631,37 @@ md-list-item.file-row { font-family: var(--mono); font-size: 12px; }
 md-list-item.file-row.is-active { background: var(--md-sys-color-surface-container-highest); font-weight: 500; }
 
 .file-open { display: flex; gap: 8px; margin-top: 4px; }
+/* The file-path field keeps a native input: @material/web 2.5.0 text
+   fields never trigger their form's implicit submission on Enter (verified
+   in Chromium), and Enter-to-open is part of this control's contract.
+   Only its metrics mirror the outlined field; the gap is documented in
+   the migration report. */
 .file-open input {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 34px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  background: var(--md-sys-color-surface);
+  font: var(--md-sys-typescale-body-medium);
+}
+.file-open input:hover { border-color: var(--md-sys-color-on-surface-variant); }
+.file-open input:focus {
+  border-color: var(--md-sys-color-primary);
+  outline: none;
+  box-shadow: 0 0 0 1px var(--md-sys-color-primary);
 }
 
-/* MD3 dialog: extra-large corner, surface-container-high, level3 elevation,
-   scrim from the system scrim role. */
+/* md-dialog owns its surface, scrim, shape and elevation. The host only
+   widens the default 560px container so the two-pane Settings layout fits:
+   the surface max-width inherits from the host. */
 .settings-dialog {
-  width: min(760px, calc(100vw - 32px));
+  width: fit-content;
+  max-width: min(920px, calc(100vw - 32px));
+  min-width: min(280px, calc(100vw - 32px));
   height: min(560px, calc(100vh - 48px));
-  padding: 0;
-  border: none;
-  border-radius: var(--md-sys-shape-corner-extra-large);
-  background: var(--md-sys-color-surface-container-high);
-  color: var(--md-sys-color-on-surface);
-  box-shadow: var(--md-sys-elevation-level3);
 }
-
-.settings-dialog::backdrop { background: color-mix(in srgb, var(--md-sys-color-scrim) 32%, transparent); }
 
 .settings-shell {
   display: grid;

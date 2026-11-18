@@ -472,15 +472,17 @@ function renderComposer() {
   const previous = select.value;
   select.textContent = '';
   if (!state.tasks.length) {
-    const option = el('option', null, 'No tasks available');
+    const option = document.createElement('md-select-option');
     option.value = '';
+    option.headline = 'No tasks available';
     select.appendChild(option);
     select.disabled = true;
   } else {
     select.disabled = false;
     for (const task of state.tasks) {
-      const option = el('option', null, task.id + ' - ' + task.goal);
+      const option = document.createElement('md-select-option');
       option.value = task.id;
+      option.headline = task.id + ' - ' + task.goal;
       option.title = task.goal;
       select.appendChild(option);
     }
@@ -489,7 +491,7 @@ function renderComposer() {
     else select.value = state.tasks[0].id;
   }
 
-  const piOption = $('mode').querySelector('option[value="pi"]');
+  const piOption = $('mode').querySelector('md-select-option[value="pi"]');
   piOption.disabled = !state.pi.ready;
   piOption.title = state.pi.ready ? 'Runs the real Pi agent loop' : (state.pi.reason ?? 'Pi is not configured');
 
@@ -628,6 +630,7 @@ function renderThreadHead() {
   const [cls, label] = THREAD_CHIPS[status] ?? ['chip-idle', 'Idle'];
   chipEl.className = 'chip ' + cls;
   chipEl.textContent = label;
+  $('run-progress').hidden = status !== 'running';
 }
 
 // ---------- rendering: inspector ----------

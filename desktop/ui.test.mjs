@@ -107,11 +107,16 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     assert.ok(detailsIndex > contextIndex && detailsIndex < fileIndex,
       'inspector details precede the file view inside the rail');
     assert.ok(!html.includes('id="ctx-title"'), 'inspector does not repeat the thread title');
-    assert.ok(html.includes('<option value="fixture">Demo</option>'),
-      'the task chooser reads Demo while keeping the fixture payload value');
-    assert.ok(html.includes('rows="1"'), 'composer textarea is one row tall');
-    assert.ok(html.includes('aria-label="Task"') && html.includes('aria-label="Mode"'),
-      'composer selects keep accessible names without visible labels');
+    assert.match(html, /<md-select-option value="fixture" headline="Demo">/,
+      'the mode chooser reads Demo while keeping the fixture payload value');
+    assert.ok(html.includes('<md-outlined-text-field id="goal" type="textarea" rows="1"'),
+      'the composer goal is a Material textarea field, one row tall');
+    for (const [id, label] of [['task', 'Task'], ['mode', 'Mode']]) {
+      const tag = html.match(new RegExp(`<md-outlined-select[^>]*id="${id}"[^>]*>`))?.[0] ?? '';
+      assert.ok(tag.includes(`label="${label}"`), `${id} is a Material outlined select labeled "${label}"`);
+    }
+    assert.ok(html.includes('<md-linear-progress id="run-progress" indeterminate hidden>'),
+      'live runs show an indeterminate Material progress bar');
     assert.ok(html.includes('href="style.css"'), 'index.html links style.css')
     assert.equal(html.split('src="/material.js"').length - 1, 1,
       'index.html references the local Material bundle exactly once');

@@ -76,6 +76,7 @@
           </div>
           <span class="chip chip-idle" id="thread-status">Idle</span>
         </header>
+        <md-linear-progress id="run-progress" indeterminate hidden></md-linear-progress>
         <div class="boot-notice" id="boot-notice" hidden role="alert">
           <span id="boot-text"></span>
           <md-text-button id="boot-retry" type="button">Retry</md-text-button>
@@ -89,8 +90,7 @@
         </div>
         <footer class="composer">
           <div class="composer-field">
-            <label class="visually-hidden" for="goal">Goal</label>
-            <textarea id="goal" rows="1" placeholder="Describe the task"></textarea>
+            <md-outlined-text-field id="goal" type="textarea" rows="1" label="Goal" placeholder="Describe the task"></md-outlined-text-field>
           </div>
           <div class="composer-row">
             <span class="provider-status" id="provider-status"></span>
@@ -98,15 +98,13 @@
             <details class="composer-secondary" id="demo-controls">
               <summary>Demo &amp; testing</summary>
               <div class="field">
-                <label class="visually-hidden" for="task">Task</label>
-                <select id="task" aria-label="Task"></select>
+                <md-outlined-select id="task" label="Task"></md-outlined-select>
               </div>
               <div class="field">
-                <label class="visually-hidden" for="mode">Mode</label>
-                <select id="mode" aria-label="Mode">
-                  <option value="fixture">Demo</option>
-                  <option value="pi">Pi</option>
-                </select>
+                <md-outlined-select id="mode" label="Mode">
+                  <md-select-option value="fixture" headline="Demo"></md-select-option>
+                  <md-select-option value="pi" headline="Pi"></md-select-option>
+                </md-outlined-select>
               </div>
               <p class="mode-note" id="mode-note" hidden></p>
             </details>
