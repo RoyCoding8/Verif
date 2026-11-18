@@ -57,21 +57,33 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     for (const anchor of ['id="provider-list"', 'id="provider-add"', 'id="provider-form"', 'id="provider-label"', 'id="provider-protocol"', 'id="provider-base-url"', 'id="provider-model"', 'id="provider-api-key"', 'id="provider-apply"', 'id="provider-cancel-form"', 'id="provider-save-changes"', 'id="provider-revert"', 'id="provider-error"', 'id="provider-dirty"', 'id="key-indicator"', 'id="cred-status"']) {
       assert.ok(html.includes(anchor), `index.html contains ${anchor}`);
     }
-    for (const protocol of ['openai-completions', 'openai-responses', 'anthropic-messages']) {
-      assert.ok(html.includes(`value="${protocol}"`), `protocol chooser offers ${protocol}`);
+    // The Providers form is real Material Web controls: five fields, the
+    // protocol dropdown, and typed form actions.
+    for (const [id, label] of [['provider-label', 'Name'], ['provider-base-url', 'Base URL'], ['provider-model', 'Model'], ['provider-api-key', 'API key']]) {
+      const tag = html.match(new RegExp(`<md-outlined-text-field[^>]*id="${id}"[^>]*>`))?.[0] ?? '';
+      assert.ok(tag.includes(`label="${label}"`), `${id} is a Material outlined text field labeled "${label}"`);
     }
-    assert.ok(html.includes('type="password"') && html.includes('autocomplete="new-password"'),
-      'the API key is a transient password input, never a saved/auto-filled field');
+    const keyTag = html.match(/<md-outlined-text-field[^>]*id="provider-api-key"[^>]*>/)?.[0] ?? '';
+    assert.ok(keyTag.includes('type="password"') && keyTag.includes('autocomplete="new-password"'),
+      'the API key is a transient password field, never a saved or auto-filled one');
+    const protocolTag = html.match(/<md-outlined-select[^>]*id="provider-protocol"[^>]*>/)?.[0] ?? '';
+    assert.ok(protocolTag.includes('label="Protocol"'), 'the protocol chooser is a Material outlined select labeled "Protocol"');
+    for (const protocol of ['openai-completions', 'openai-responses', 'anthropic-messages']) {
+      assert.match(html, new RegExp(`<md-select-option[^>]*value="${protocol}"`), `protocol chooser offers ${protocol}`);
+    }
+    for (const [id, tag] of [['provider-apply', 'md-filled-button'], ['provider-save-changes', 'md-filled-button'], ['provider-cancel-form', 'md-text-button'], ['provider-revert', 'md-text-button'], ['provider-add', 'md-text-button']]) {
+      const button = html.match(new RegExp(`<${tag}[^>]*id="${id}"[^>]*>`))?.[0] ?? '';
+      assert.ok(button.includes('type="button"'), `${id} is a ${tag} that never submits the form`);
+    }
+    const formHtml = html.match(/<form[^>]*id="provider-form"[\s\S]*?<\/form>/)?.[0] ?? '';
+    assert.ok(!/<input|<select/.test(formHtml), 'the provider form ships no hand-rolled input or select');
     // Theme choices are native radios in a radiogroup so arrow keys move the
     // selection and the checked radio carries the selected state.
     assert.ok(html.includes('role="radiogroup"') && html.includes('type="radio" name="appearance"'),
       'theme choices are native radios in a radiogroup');
-    // Settings text fields use the MD3 outlined field wrapper with floating
-    // labels that keep their for= accessible names.
-    assert.ok(html.includes('class="md-field"'), 'Settings fields use the MD3 outlined field wrapper');
-    for (const fieldId of ['ceiling-input', 'provider-label', 'provider-protocol', 'provider-base-url', 'provider-model', 'provider-api-key']) {
-      assert.match(html, new RegExp(`<label for="${fieldId}"`), `the outlined field label keeps for=${fieldId}`);
-    }
+    // The General ceiling keeps the shared .md-field wrapper until its slice.
+    assert.ok(html.includes('class="md-field"'), 'the General ceiling keeps the MD3 outlined field wrapper');
+    assert.match(html, /<label for="ceiling-input"/, 'the ceiling label keeps its for= accessible name');
     assert.ok(html.includes('id="ceiling-input"') && html.includes('id="general-save"'), 'General exposes the spending ceiling');
     // Startup recovery and composer status.
     for (const anchor of ['id="boot-notice"', 'id="boot-retry"', 'id="boot-text"', 'id="boot-detail"', 'id="provider-status"', 'id="provider-setup"']) {
@@ -96,7 +108,11 @@ test('index.html ships every DOM anchor the shell and composer contract require'
     assert.ok(html.includes('aria-label="Task"') && html.includes('aria-label="Mode"'),
       'composer selects keep accessible names without visible labels');
     assert.ok(html.includes('href="style.css"'), 'index.html links style.css')
-    assert.ok(html.includes('src="app.js"'), 'index.html links app.js');
+    assert.equal(html.split('src="/material.js"').length - 1, 1,
+      'index.html references the local Material bundle exactly once');
+    assert.ok(/<script src="app\.js" defer><\/script>/.test(html), 'app.js stays classic and deferred');
+    assert.ok(html.indexOf('src="/material.js"') < html.indexOf('src="app.js"'),
+      'the Material module registers its elements before app.js runs');
   });
 });
 
@@ -127,8 +143,9 @@ test('the shipped theme is the MD3 token foundation, self-contained offline', as
     assert.ok(css.includes('color-mix'), 'state layers are applied as color overlays');
     // The self-hosted Roboto leads the stack so it actually renders.
     assert.ok(css.includes('--sans: "Roboto", system-ui'), 'Roboto is ahead of system-ui in the base font');
-    // MD3 outlined field metrics: 56px container height.
-    assert.ok(/\.md-field input, \.md-field select\s*{[^}]*height: 56px/.test(css),
+    // MD3 outlined field metrics: 56px container height on the shared
+    // .md-field rules the General ceiling still uses.
+    assert.ok(/\.md-field input\s*{[^}]*height: 56px/.test(css),
       'MD3 outlined field containers are 56px tall');
     // Packaged runtime must work offline: no CDN or external asset anywhere.
     for (const source of [css, html]) {
