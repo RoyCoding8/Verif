@@ -1,0 +1,102 @@
+# Verity
+
+Verity runs approved software tasks in separate Git checkouts. It checks the exact integration snapshot and records the results before updating the protected branch.
+
+## Run the reservation example
+
+Use Node.js 24 and Git 2.38 or later.
+
+```sh
+npm ci
+npm run demo
+```
+
+The example starts two independent reservation tasks and schedules the API task after both land. It checks all 15 cases in a declared arithmetic domain, observes the expected failure on the original code, and checks one API interaction. The fixture supplies reproducible candidate edits. To let Pi propose the edits, configure a Pi model and run `npm run demo -- --pi`.
+
+The `Evaluate Pi reservation changes` workflow runs paired normal and adversarial prompts under the same Pi model and wall-time budget. Its shadow suite checks contextual decline wording and preservation of other statuses. Set `GEMINI_API_KEY` or `OPENROUTER_API_KEY` in GitHub Actions for the selected provider.
+
+To run the evaluation, set Actions variables `VERITY_EVAL_PROVIDER` (`google` or `openrouter`), `VERITY_EVAL_MODEL` (exact Pi model ID), and `VERITY_EVAL_COST_CEILING_USD` (approved spending ceiling). Start the workflow from the Actions tab. Set `VERITY_EVAL_TRIALS` to override the default of two pairs per challenge. The workflow also accepts manual inputs.
+
+## Run an approved plan
+
+The manifest contains `repository`, `oracles`, `journal`, `scratch`, `maxWorkers`, and `tasks`. Paths are relative to the manifest. The example builds the task records in `examples/setup.mjs`. Store the manifest, oracle files, journal, and protected repository under controller control.
+
+Set `orthogonalOnly` to `true` to dispatch tasks together only when their approved write scopes and candidate verification inputs are independent. A full-tree candidate check runs alone in this mode.
+
+1. Run `node src/cli.mjs plan manifest.json` to inspect the proposed contract, coverage, and obligations.
+2. Review the plan and set each task's `approval` to the displayed digest when you approve it.
+3. Run `node src/cli.mjs run manifest.json`.
+4. Use `node src/cli.mjs receipt manifest.json <operation>` to inspect the recorded evidence.
+
+To ask Pi for a plan, list the available oracle files in each task's `oracleFiles` and run `node src/cli.mjs propose manifest.json`. Review the returned intent before approving it.
+
+To accept a residual risk, enter an acceptance criterion with `id`, `description`, and `exception: { "risk": "Review pending" }` in the manifest, then approve the exact plan. The receipt retains the risk, and the remaining claims and obligations still have to pass. Changing or adding an exception requires direct approval.
+
+For a task whose approved policy includes `"delegation": "monotonic"`, run `node src/cli.mjs delegate manifest.json proposed-task.json` to check the next full task revision. A plain task proposal can add coverage and tighten budgets and path permissions while preserving existing claims and obligations. The controller can install the returned revision in its manifest after the check.
+
+On Linux, a bound Lean claim can advance by a checked semantic refinement. Its `lean` record names the frozen `source`, `definitionDigest`, `domain` and `implementation`, and the current `precondition`, `guarantee`, `assumptions` and candidate proof `obligation`. Seal the candidate oracle against the frozen declarations and the statement `∀ x, precondition x → implementation x → guarantee x`. Supply a delegation request shaped as `{ "task": proposedTask, "witness": { "claim": "claim-id" } }` to obtain the exact witness challenge. Add the Lean source text as `witness.solution` and rerun `delegate` to obtain the checked revision. The witness is bound to the exact predecessor, successor and claim. Retain prior obligations and add a new proof obligation for the successor predicate.
+
+Set `policy.feedbackChecks` to the obligation IDs the worker may run while constructing a candidate. The default is an empty list. Keep held-out acceptance obligations outside this list. Workers receive a generic refusal on retry and operators can inspect the specific final refusal with `status`.
+
+Use `node src/cli.mjs refinement manifest.json witness-request.json` on Linux to check a Lean witness for a principal-approved refinement contract. The manifest's `refinements` list supplies `id`, `source` relative to `oracles`, `contract`, `approvedDigest`, and `timeoutMs`. The witness request supplies the matching `id` and the candidate Lean module as `solution`. The command returns a checked witness and its binding digests. Approval of a task revision still goes through `delegate` or the principal.
+
+Use `status` to see persisted task outcomes. `run` prints an attempt ID when a worker starts. Use `cancel` with that ID to revoke its authority. Use `recover` with a prepared operation ID to reconcile an interrupted promotion. Add `--abandon` to abandon an operation that has not written its target ref. Recovery records a completed update if the ref already points to the prepared commit. If a controller stops while a task is running, resolve any prepared promotion and use `requeue` with the task ID to retry it. The initial attempt plus `policy.maxRepairs` is the total attempt allowance. Requeue keeps the original deadline and charges any attempt already reserved.
+
+Set `policy.validUntilMs` to an absolute Unix timestamp in milliseconds to limit approval validity. The controller checks its host clock at dispatch and when authorizing a ref update. A delegated revision may shorten the period.
+
+Run `node src/cli.mjs revoke manifest.json <approval-digest>` to revoke an exact approval in the manifest's journal. Existing attempts lose authority, and that digest cannot authorize new attempts or delegated revisions. An already completed ref update can still be recorded during recovery. Previously approved revisions with distinct digests retain their own authority.
+
+`status` includes verifier verdict mismatches with the attempt, obligation, candidate snapshot and evidence identity. Held-out failures stay in the controller journal. Retry prompts receive the generic refusal and any explicitly approved feedback.
+
+A principal can turn a confirmed refusal into worker guidance with `policy.lessons`. Each entry names the recorded `attempt` and `evidence`, approved `diagnosis` text, and a current positive candidate obligation as `regression`. Verity checks the historical record before dispatch and includes the approved diagnosis in the worker prompt.
+
+`status` totals model tokens and estimated cost for attempts with reported usage, including failed attempts when Pi can supply their session statistics. The report includes the number of attempts with usage. An interrupted process can incur charges before it records statistics.
+
+To choose the Pi model, set `policy.modelRoute` to an ordered list of exact `{provider, model}` pairs. Each reserved attempt advances through that list and reuses its final entry when the list is exhausted. The provider needs credentials on the controller host. Route changes require a new principal approval.
+
+Set `policy.maxToolCalls` to cap Pi tool calls and `policy.maxVerificationMs` to cap the sum of timeouts reserved for new verifier executions. Both allowances are shared by a task's attempts and survive restart. Feedback checks and final verification draw from the same verifier allowance. A cache hit uses no new verifier reservation.
+
+To revert a landed change, create and approve a new task with `revertOperation` set to the earlier promotion operation ID. Give it the scope and checks for the restored behavior. Verity applies the inverse patch to the current target in a disposable checkout and sends that candidate through the normal verification and promotion gates.
+
+### Share a promotion attestation
+
+Use an Ed25519 private key in PEM format to sign a recorded promotion. Give the recipient the envelope, the trusted public key, and the expected full Git commit ID.
+
+```sh
+node src/cli.mjs attest manifest.json <operation> <private-key.pem> > envelope.json
+node src/cli.mjs verify-attestation <repository> <commit> envelope.json <public-key.pem>
+```
+
+Verification checks the signature and the immutable commit, tree, parent, and receipt trailer. The signed summary includes per-claim assurance and approved exception IDs. The journal retains the full receipt, risk text, and held-out observations. Keep the private key under controller control.
+
+## Evidence and operating scope
+
+The `node-test` and `finite-domain` JSON oracles list case IDs, module paths, exported functions, inputs, and expected values. The evaluator receives inputs in a separate process. The verifier compares its output with the approved values and binds the result to the oracle digest, adapter, and checked tree.
+
+The tested route reports observed cases. The bounded route requires exactly one case for every input tuple in the approved finite domain. A human reviews whether the domain and expected values capture the intended claim. The TLA+ model checks a finite promotion protocol and includes an unfenced configuration that must produce an unauthorized-update counterexample.
+
+Use `node-property` to sample an approved set of inputs. Its JSON oracle specifies `module`, `name`, argument `axes`, a constant `expected` result, a uint32 `seed`, and `samples` from 1 to 1000. Use consecutive string case IDs starting at `"0"`. The receipt records the generator, seed and count. Each draw contributes tested assurance.
+
+Use `node-differential` to check a refactor. The approved JSON oracle lists `{id, module, name, args}` for each case. Use `subject: "candidate"` and `expect: "PASS"`. Each export must return a deterministic JSON value. Verity runs the cases separately on the task's exact base and the candidate integration tree, then compares their outputs. Request `cases.json` to retain the comparisons. Each run checks both full snapshots and contributes tested assurance for the approved cases.
+
+Use `node-mutation` to check whether approved Node cases detect specific regressions. Set `subject` to `candidate` and `expect` to `PASS`. The oracle has `kind: "node-mutation-v1"`, ordinary Node `cases` with `expected` values, a `minimumKills` count, and `mutants` with `id`, `path`, `before`, `after` and `witness`. Each mutant replaces one exact occurrence of `before` in a changed JavaScript file and runs in a fresh copy of the full candidate. The pristine cases must all pass. A mutant counts as killed when its named witness is the only case with a different result. Request `cases.json` to retain the kills, survivors and mutant digests. The result contributes tested assurance for the approved cases and edits.
+
+Use `node-history` to check linearizability of concurrent calls. The approved JSON oracle supplies a `machine` with an `initial` state and deterministic `transitions` (`from`, `operation`, `input`, `output`, `to`). Each case names a module and factory export, its `args`, ordered phases of `calls`, and an `expect` value of `linearizable` or `nonlinearizable`. Each call has an `operation` and JSON `input`. The factory returns a fresh service object with those methods as own properties, and each method returns a JSON value or a promise of one. Verity calls the methods, captures invocation and response order, and checks whether a sequential execution can explain the recorded results. The oracle must name `requiredOperations` exercised by positive cases and supply a `negativeControl` history the checker rejects. Verity requires observed overlap in a positive case and runs fresh histories for each verification. Request `cases.json` to retain the recorded events. The result contributes tested assurance for the recorded histories.
+
+A Lean oracle can include principal-approved local helper `modules` as `{name, source}` entries. Use names such as `VerityReservation` and import them from the challenge or solution. The plan records the name and source digest of each module in `leanModules`. The planner derives these records from the selected oracle. Linked proofs must preserve the helper sources recorded by their prerequisite receipts.
+
+Set `policy.reuseEvidence` to `true` only for deterministic Node and finite-domain checks. Verity can reuse raw observations for the same commit, tree, approved oracle, and execution environment. It rebuilds verdicts and artifacts for the current plan and checks current authorization before promotion. See [the reuse contract](verification/EvidenceReuse.md) for the full key and reproduction steps.
+
+For a Node obligation whose inputs are known, set `inputPaths` to the exact files it needs, including imports, package metadata and fixtures. Verity materializes those files for the check. With reuse enabled, an unrelated commit can reuse observations if the approved inputs, tool and oracle match. The promotion receipt still names the current candidate.
+
+### Run Kani or check a Lean proof
+
+Use `kani` on Linux with Kani 0.68.0 and CBMC 6.11.0. The approved JSON oracle has `kind: "kani"`, the relative `source` path, approved Rust `harness` source, harness `name`, and reachability `probes`. Set `cases` to an array containing the harness name. The subject is a single standalone Rust source file loaded as `subject` by the harness. The result contributes bounded assurance for the approved harness and its unwind bound.
+
+Use `lean-comparator` on Linux with the Lean 4.35.0 toolchain and a working `bubblewrap` sandbox. The approved oracle JSON contains a qualified `theorem` name, a `solution` path relative to the subject tree, and `challenge` Lean source. Set the obligation's `cases` to an array containing the theorem name and set `expect` to `PASS`. The solution file must define a theorem with the same name and statement. The worker needs the statement to construct a proof, so include it in the task goal.
+
+The verifier copies the solution from the exact Git snapshot and checks it against the approved challenge. Comparator matches the theorem statement, restricts axioms, and replays the proof through Lean's kernel. This verifies the stated Lean theorem. A claim about code in another language needs a separate, reviewed connection between that code and the Lean statement.
+
+For a theorem that uses a promoted prerequisite, add `proofDependencies` to its obligation. Each entry names the direct prerequisite `task`, its verified `obligation` and its `theorem`. The downstream challenge must state all linked theorems. The solution files are ordered Lean declaration fragments that share one module, with any imports at the start of the first fragment. Verity checks the prerequisite source against the promoted evidence, then checks all named theorems together.
+
+Run Verity on a trusted host with cooperative workers and controller-owned Git refs. Independent checkouts and process permissions constrain the supplied worker and Node verification routes. A hostile-code isolation boundary requires stronger deployment controls.

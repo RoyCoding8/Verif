@@ -1,0 +1,55 @@
+name: Evaluate Pi reservation changes
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Pi provider
+        type: choice
+        options: [openrouter]
+        required: true
+      model:
+        description: Exact Pi model ID
+        type: string
+        required: true
+      trials:
+        description: Paired trials per challenge, from 1 to 10
+        type: number
+        default: 2
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Run matched trials
+        env:
+          TRIAL_PROVIDER: ${{ inputs.provider || vars.VERITY_EVAL_PROVIDER }}
+          TRIAL_MODEL: ${{ inputs.model || vars.VERITY_EVAL_MODEL }}
+          TRIAL_COUNT: ${{ inputs.trials || vars.VERITY_EVAL_TRIALS || '2' }}
+          VERITY_COST_CEILING_USD: ${{ vars.VERITY_EVAL_COST_CEILING_USD }}
+          OPENROUTER_API_KEY: ${{ (inputs.provider || vars.VERITY_EVAL_PROVIDER) == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VERITY_COST_CEILING_USD" || { echo 'Missing VERITY_EVAL_COST_CEILING_USD (approved dollar ceiling)'; exit 1; }
+          case "$TRIAL_PROVIDER" in
+            openrouter) test -n "$OPENROUTER_API_KEY" || { echo 'Missing OPENROUTER_API_KEY'; exit 1; } ;;
+            *) echo 'Select openrouter as the evaluation provider'; exit 1 ;;
+          esac
+          node evaluation/cost-admission.mjs --check "$TRIAL_PROVIDER" "$TRIAL_MODEL"
+          node evaluation/reservation.mjs --live "$TRIAL_PROVIDER" "$TRIAL_MODEL" "$TRIAL_COUNT"

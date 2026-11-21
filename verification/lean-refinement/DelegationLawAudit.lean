@@ -1,0 +1,6 @@
+import DelegationLaw
+
+#print axioms VerityDelegation.issueSound
+#print axioms VerityDelegation.staleSuccessorDigestReplayRejected
+#print axioms VerityDelegation.staleSuccessorApprovalReplayRejected
+#print axioms VerityDelegation.staleClaimReplayRejected

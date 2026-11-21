@@ -1,0 +1,10 @@
+import VerityContract
+
+#print axioms VerityContract.supportsWeakestExact
+#print axioms VerityContract.supportsWeakestWithExact
+#print axioms VerityContract.formalDropsToBounded
+#print axioms VerityContract.boundedDependencyBlocksFormal
+#print axioms VerityContract.allFormalComponentsPreserveFormal
+#print axioms VerityContract.insufficientTestedEvidenceRejectsBounded
+#print axioms VerityContract.gateExact
+#print axioms VerityContract.gateRefusesMissing

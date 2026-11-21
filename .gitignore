@@ -1,0 +1,21 @@
+/tmp/
+/.worktrees/
+/node_modules/
+/.verity/
+/dist/
+/out/
+
+# local-only runtime noise, never part of the deliverable
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+
+# credentials stay on the operator's machine
+.env
+.env.*
+*.pem
+*.key
+
+# working conventions for coding agents, not part of the deliverable
+AGENTS.md

@@ -1,0 +1,82 @@
+name: Verify refinement witnesses
+
+on:
+  push:
+    branches: [main, "ci/**", "wt/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  refinement-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Install pinned Lean and check bubblewrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          archive="$RUNNER_TEMP/lean-4.35.0-linux.tar.zst"
+          curl --fail --location --retry 3 \
+            https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-linux.tar.zst \
+            --output "$archive"
+          echo "7289597a44543246c9227b8cae501767e095ce17f6d448b95fc4a8dc97268f6d  $archive" | sha256sum --check -
+          tar --zstd --extract --file "$archive" --directory "$RUNNER_TEMP"
+          export PATH="$RUNNER_TEMP/lean-4.35.0-linux/bin:$PATH"
+          echo "$RUNNER_TEMP/lean-4.35.0-linux/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          command -v bwrap
+          bwrap --ro-bind / / --unshare-user --unshare-net --die-with-parent /usr/bin/true
+          lake --version
+      - name: Build and replay the shared Lean contract and finite witness
+        run: |
+          lake build --wfail
+          lake check
+        working-directory: verification/lean-refinement
+      - name: Check the refinement declarations for axiom dependencies
+        run: |
+          lake env lean -DwarningAsError=true AxiomAudit.lean > "$RUNNER_TEMP/refinement-axioms.txt"
+          for theorem in VerityRefinement.refinesTrans finiteWitness newGuaranteeMayImproveOutsideOldDomain; do
+            grep -Fx "'$theorem' does not depend on any axioms" "$RUNNER_TEMP/refinement-axioms.txt"
+          done
+          lake env lean -DwarningAsError=true DelegationLawAudit.lean > "$RUNNER_TEMP/delegation-axioms.txt"
+          for theorem in issueSound staleSuccessorDigestReplayRejected staleSuccessorApprovalReplayRejected staleClaimReplayRejected; do
+            grep -Fx "'VerityDelegation.$theorem' does not depend on any axioms" "$RUNNER_TEMP/delegation-axioms.txt"
+          done
+          lake env lean -DwarningAsError=true AttemptBudgetLawAudit.lean > "$RUNNER_TEMP/attempt-budget-axioms.txt"
+          for theorem in executeSafe stepSafe initialSafe executeSpentMonotone stepSpentMonotone grantProgress grantRefused staleGrantRefused queuedGrantRefused exhaustedGrantRefused startDoesNotSpend clearDoesNotSpend requeueDoesNotSpend clearPreservesCap requeuePreservesCap stepPreservesCap executePreservesCap; do
+            grep -Fx "'VerityAttemptBudget.$theorem' does not depend on any axioms" "$RUNNER_TEMP/attempt-budget-axioms.txt"
+          done
+          lake env lean -DwarningAsError=true PromotionLawAudit.lean > "$RUNNER_TEMP/promotion-axioms.txt"
+          grep -Fx "'VerityPromotion.initialSafe' does not depend on any axioms" "$RUNNER_TEMP/promotion-axioms.txt"
+          for theorem in stepSafe stepPreservesWrite executeSafe executeAtMostOneWrite executePreservesWrites matchingFencesWrite movedHeadRejects revokedAuthorityRejects unapprovedTargetRejects noOpTargetRejects recoveryAfterWriteOnlyRecordsOutcome successfulRecoveryTrace retryAfterAppliedDoesNotWrite; do
+            grep -Ex "'VerityPromotion\.$theorem' (does not depend on any axioms|depends on axioms: \[(propext|Quot\.sound|propext, Quot\.sound)\])" "$RUNNER_TEMP/promotion-axioms.txt"
+          done
+          lake env lean -DwarningAsError=true HistoryLawAudit.lean > "$RUNNER_TEMP/history-axioms.txt"
+          for theorem in search_correct completeHistory_correct; do
+            grep -Fx "'VerityHistoryLaw.$theorem' depends on axioms: [propext, Quot.sound]" "$RUNNER_TEMP/history-axioms.txt"
+          done
+          for theorem in acceptedCompleteHistory rejectedRealTimeViolation acceptedImpliesConstructiveExecution; do
+            grep -Fx "'VerityHistoryAudit.$theorem' depends on axioms: [propext, Classical.choice, Quot.sound]" "$RUNNER_TEMP/history-axioms.txt"
+          done
+          lake env lean -DwarningAsError=true NodeDifferential.lean > "$RUNNER_TEMP/node-differential-axioms.txt"
+          for theorem in acceptance_preserves_observations acceptance_binds_snapshots_recipe_and_oracle refactorAccepted staleBaselineRejected staleCandidateManifestRejected staleOracleRejected incompleteInventoryRejected explicitFalsePositiveRejected; do
+            grep -Fx "'VerityNodeDifferential.$theorem' does not depend on any axioms" "$RUNNER_TEMP/node-differential-axioms.txt"
+          done
+          for theorem in acceptedCheck_correct refactorAcceptedAsProp; do
+            grep -Fx "'VerityNodeDifferential.$theorem' depends on axioms: [propext, Quot.sound]" "$RUNNER_TEMP/node-differential-axioms.txt"
+          done
+        working-directory: verification/lean-refinement
+      - name: Check generated witnesses with the pinned Lake Comparator
+        run: node --test test/refinement-proof.test.mjs test/refinement-cli.test.mjs test/semantic-delegation.test.mjs
+        env:
+          VERITY_LEAN_SMOKE: "1"

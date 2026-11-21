@@ -1,0 +1,19 @@
+import AttemptBudgetLaw
+
+#print axioms VerityAttemptBudget.executeSafe
+#print axioms VerityAttemptBudget.stepSafe
+#print axioms VerityAttemptBudget.initialSafe
+#print axioms VerityAttemptBudget.executeSpentMonotone
+#print axioms VerityAttemptBudget.stepSpentMonotone
+#print axioms VerityAttemptBudget.grantProgress
+#print axioms VerityAttemptBudget.grantRefused
+#print axioms VerityAttemptBudget.staleGrantRefused
+#print axioms VerityAttemptBudget.queuedGrantRefused
+#print axioms VerityAttemptBudget.exhaustedGrantRefused
+#print axioms VerityAttemptBudget.startDoesNotSpend
+#print axioms VerityAttemptBudget.clearDoesNotSpend
+#print axioms VerityAttemptBudget.requeueDoesNotSpend
+#print axioms VerityAttemptBudget.clearPreservesCap
+#print axioms VerityAttemptBudget.requeuePreservesCap
+#print axioms VerityAttemptBudget.stepPreservesCap
+#print axioms VerityAttemptBudget.executePreservesCap

@@ -1,0 +1,548 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { CostExhausted, requestBoundMicros } from "../src/cost-ceiling.mjs";
+import { runPiWorker } from "../src/pi-worker.mjs";
+
+async function fixture(t) {
+  const dir = await mkdtemp(path.join(process.cwd(), ".pi-worker-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function inspectRequest({ workspace, sdk, goal = "Inspect", ...rest }) {
+  return { workspace, goal, scope: { read: [], write: [], forbidden: [] }, sdk, ...rest };
+}
+
+function customTool(state, name) {
+  return state.options.customTools.find((tool) => tool.name === name);
+}
+
+async function seedFile(workspace, relative, content) {
+  await mkdir(path.join(workspace, path.dirname(relative)), { recursive: true });
+  await writeFile(path.join(workspace, relative), content);
+}
+
+// Request entries of the pinned 1.5.2 ModelRuntime declaration, plus non-request utilities.
+function fullRequestRuntime(dispatched) {
+  return {
+    stream(...args) { dispatched.push("stream"); },
+    complete(...args) { dispatched.push("complete"); },
+    streamSimple(...args) { dispatched.push("streamSimple"); },
+    completeSimple(...args) { dispatched.push("completeSimple"); },
+    streamDeferred(...args) { dispatched.push("streamDeferred"); },
+    fetchDeferred(...args) { dispatched.push("fetchDeferred"); },
+    generateImages(...args) { dispatched.push("generateImages"); },
+    classify(...args) { dispatched.push("classify"); },
+    cancelDeferred(...args) { dispatched.push("cancelDeferred"); return "cancelled"; },
+    getModel(...args) { dispatched.push("getModel"); return { provider: args[0], id: args[1] }; },
+  };
+}
+
+const catalogHandle = { provider: "google", modelId: "gemini-2.5-flash", api: "openai-completions", id: "row-1" };
+
+const CONTEXT_ENTRY_METHODS = ["stream", "complete", "streamSimple", "completeSimple", "generateImages", "classify"];
+
+test("every context request entry is priced from the catalog and admitted before dispatch", async t => {
+  const workspace = await fixture(t);
+  const order = [];
+  const admissions = [];
+  const context = [{ role: "user", content: "hello world" }];
+  const { sdk } = fakeSdk({
+    promptRun: options => {
+      const runtime = options.modelRuntime;
+      runtime.stream(catalogModel, context);
+      runtime.complete(catalogModel, context);
+      runtime.streamSimple(catalogModel, context);
+      runtime.completeSimple(catalogModel, context);
+      runtime.generateImages(catalogModel, context);
+      runtime.classify(catalogModel, context);
+    },
+  });
+  const result = await runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime: fullRequestRuntime(order),
+    admitRequest: ({ boundMicros, requestBound }) => {
+      order.push("admit");
+      admissions.push({ boundMicros, requestBound });
+    },
+  }));
+  assert.equal(result.status, "candidate");
+  assert.deepEqual(order, [
+    "admit", "stream", "admit", "complete", "admit", "streamSimple",
+    "admit", "completeSimple", "admit", "generateImages", "admit", "classify",
+  ]);
+  const inputBytes = Buffer.byteLength(JSON.stringify(context), "utf8");
+  assert.deepEqual(admissions.map(({ requestBound }) => ({ ...requestBound })), Array(6).fill({
+    provider: "google", model: "gemini-2.5-flash", inputUsdPerMTok: 0.6, outputUsdPerMTok: 2.5,
+    maxOutputTokens: 1_000, source: "pi-model-catalog",
+  }));
+  assert.deepEqual(admissions.map(({ boundMicros }) => boundMicros),
+    Array(6).fill(Math.ceil(inputBytes * 0.6) + Math.ceil(1_000 * 2.5)));
+});
+
+test("zero budget refuses every context request entry before dispatch", async t => {
+  const workspace = await fixture(t);
+  for (const method of CONTEXT_ENTRY_METHODS) {
+    const dispatched = [];
+    const { sdk } = fakeSdk({ promptRun: options => {
+      try { options.modelRuntime[method](catalogModel, []); } catch { /* the session reports errors as messages */ }
+    } });
+    await assert.rejects(runPiWorker(inspectRequest({
+      workspace, sdk,
+      model: catalogModel, modelRuntime: fullRequestRuntime(dispatched),
+      admitRequest: () => { throw new CostExhausted("Cost ceiling exhausted: zero budget"); },
+    })), /Cost ceiling exhausted/);
+    assert.deepEqual(dispatched, [], method);
+  }
+});
+
+test("deferred request entries are refused before dispatch while admission is active", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const { sdk } = fakeSdk({ promptRun: options => {
+    try { options.modelRuntime.streamDeferred(catalogModel, catalogHandle); } catch { /* the session reports errors as messages */ }
+    try { options.modelRuntime.fetchDeferred(catalogModel, catalogHandle); } catch { /* the session reports errors as messages */ }
+  } });
+  await assert.rejects(runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime: fullRequestRuntime(dispatched),
+    admitRequest: () => { throw new Error("admission must not be reached for a deferred request"); },
+  })), /Deferred model request cannot be priced before dispatch: fetchDeferred/);
+  assert.deepEqual(dispatched, []);
+});
+
+test("non-request runtime utilities stay unwrapped and dispatch without admission", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const admissions = [];
+  const { sdk } = fakeSdk({ promptRun: options => {
+    assert.deepEqual(options.modelRuntime.getModel("google", "gemini-2.5-flash"), { provider: "google", id: "gemini-2.5-flash" });
+    assert.equal(options.modelRuntime.cancelDeferred(catalogModel, catalogHandle), "cancelled");
+  } });
+  const result = await runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime: fullRequestRuntime(dispatched),
+    admitRequest: ({ requestBound }) => admissions.push(requestBound),
+  }));
+  assert.equal(result.status, "candidate");
+  assert.deepEqual(dispatched, ["getModel", "cancelDeferred"]);
+  assert.deepEqual(admissions, []);
+});
+
+function recordingRuntime(dispatched) {
+  return {
+    stream(...args) { dispatched.push(args); },
+    streamSimple(...args) { dispatched.push(args); },
+  };
+}
+
+async function realPiSdk() {
+  const codingAgent = await import("@earendil-works/pi-coding-agent");
+  const { Type } = await import("typebox");
+  return {
+    ...codingAgent,
+    Type,
+    async createAgentSession(options) {
+      const created = await codingAgent.createAgentSession(options);
+      created.session.prompt = async () => {};
+      return created;
+    },
+  };
+}
+
+function fakeSdk({ activeTools, promptError, promptRun, messages, stats } = {}) {
+  const state = { options: undefined, disposed: false, prompt: undefined };
+  const sdk = {
+    createExtensionRuntime: () => ({}),
+    Type: {
+      String: () => ({ type: "string" }),
+      Object: (properties, options) => ({ type: "object", properties, ...options }),
+    },
+    SessionManager: { inMemory: (cwd) => ({ cwd }) },
+    SettingsManager: { inMemory: () => ({ mode: "memory" }) },
+    async createAgentSession(options) {
+      state.options = options;
+      return {
+        session: {
+          messages,
+          getSessionStats: () => stats,
+          async prompt(prompt) {
+            state.prompt = prompt;
+            if (promptRun) await promptRun(options);
+            if (promptError) throw promptError;
+          },
+          getLastAssistantText: () => "candidate summary",
+          getActiveToolNames: () => activeTools ?? options.tools,
+          async dispose() { state.disposed = true; },
+        },
+      };
+    },
+  };
+  return { sdk, state };
+}
+
+test("creates an isolated, explicit SDK session and exposes a candidate summary", async (t) => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk();
+  const result = await runPiWorker({
+    workspace,
+    goal: "Inspect the source",
+    scope: { read: ["src"], write: ["src"], forbidden: ["src/private"] },
+    sdk,
+  });
+
+  assert.deepEqual(result, { status: "candidate", summary: "candidate summary" });
+  assert.deepEqual(state.options.tools, ["read", "write", "edit", "search"]);
+  assert.deepEqual(state.options.customTools.map((tool) => tool.name), state.options.tools);
+  assert.equal(state.options.cwd, workspace);
+  assert.equal(state.options.sessionManager.cwd, workspace);
+  assert.equal(state.options.settingsManager.mode, "memory");
+  assert.deepEqual(state.options.resourceLoader.getSkills(), { skills: [], diagnostics: [] });
+  assert.deepEqual(state.options.resourceLoader.getPrompts(), { prompts: [], diagnostics: [] });
+  assert.deepEqual(state.options.resourceLoader.getAgentsFiles(), { agentsFiles: [] });
+  assert.equal(state.disposed, true);
+});
+
+test("an explicitly selected Pi model reports usage and refuses failed provider responses", async t => {
+  const workspace = await fixture(t);
+  const modelRuntime = {};
+  const model = {};
+  const tokens = { input: 23, output: 7, cacheRead: 0, cacheWrite: 0, total: 30 };
+  const { sdk, state } = fakeSdk({ stats: { tokens, cost: 0.01 }, messages: [{ role: "assistant", stopReason: "stop" }] });
+  const request = { workspace, goal: "Inspect the source", scope: { read: [], write: [], forbidden: [] }, model, modelRuntime };
+  const result = await runPiWorker({ ...request, sdk });
+  assert.deepEqual(result.usage, { tokens, estimatedCost: 0.01 });
+  assert.equal(state.options.model, model);
+  assert.equal(state.options.modelRuntime, modelRuntime);
+  const failed = fakeSdk({ stats: { tokens, cost: 0.01 }, messages: [{ role: "assistant", stopReason: "error", errorMessage: "provider detail" }] });
+  const reported = [];
+  await assert.rejects(runPiWorker({ ...request, sdk: failed.sdk, recordUsage: usage => reported.push(usage) }), /Pi did not complete the model request/);
+  assert.deepEqual(reported, [result.usage]);
+  assert.equal(failed.state.disposed, true);
+});
+
+test("an approved route resolves the exact Pi identity before opening a session", async t => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk();
+  const route = { provider: "provider", model: "provider/model" };
+  const model = { id: route.model };
+  const lookup = [];
+  let available = true;
+  const modelRuntime = {
+    getModel: (...identity) => { lookup.push(identity); return available ? model : undefined; },
+    hasConfiguredAuth: provider => provider === route.provider,
+  };
+  sdk.ModelRuntime = { create: async () => modelRuntime };
+  const job = { workspace, goal: "Inspect", scope: { read: [], write: [] }, route, sdk };
+  await runPiWorker(job);
+  assert.deepEqual(lookup, [[route.provider, route.model]]);
+  assert.equal(state.options.model, model);
+  assert.equal(state.options.modelRuntime, modelRuntime);
+  available = false;
+  state.options = undefined;
+  await assert.rejects(runPiWorker(job), /Approved Pi model is unavailable/);
+  assert.equal(state.options, undefined);
+});
+
+test("Pi denies a write before touching the checkout when the controller refuses its tool reservation", async t => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk();
+  let calls = 0;
+  await runPiWorker({ workspace, goal: "Write a note", scope: { read: [], write: ["allowed.txt", "blocked.txt"] }, sdk,
+    reserveToolCall: () => { if (++calls > 1) throw new Error("tool budget exhausted"); } });
+  const write = customTool(state, "write");
+  const args = { path: "allowed.txt", content: "first" };
+  assert.equal((await write.execute("1", args)).isError, undefined);
+  const blocked = await write.execute("2", { ...args, path: "blocked.txt" });
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.content[0].text, /budget exhausted/);
+  assert.equal(await readFile(path.join(workspace, args.path), "utf8"), "first");
+  await assert.rejects(readFile(path.join(workspace, "blocked.txt")), { code: "ENOENT" });
+});
+
+test("scoped tools read, edit, write, search, and limit named feedback checks", async (t) => {
+  const workspace = await fixture(t);
+  await seedFile(workspace, "src/input.txt", "alpha\nbeta\n");
+  const { sdk, state } = fakeSdk();
+  const checks = [];
+  await runPiWorker({
+    workspace,
+    goal: "Update one line",
+    scope: { read: ["src"], write: ["src"], forbidden: ["src/private"] },
+    runCheck: async (name, context) => { checks.push({ name, context }); return "observed feedback"; },
+    approvedChecks: ["unit"],
+    sdk,
+  });
+
+  const tool = (name) => customTool(state, name);
+  assert.equal((await tool("read").execute("1", { path: "src/input.txt" })).content[0].text, "alpha\nbeta\n");
+  assert.equal((await tool("edit").execute("2", { path: "src/input.txt", oldText: "beta", newText: "gamma" })).isError, undefined);
+  assert.equal(await readFile(path.join(workspace, "src", "input.txt"), "utf8"), "alpha\ngamma\n");
+  assert.equal((await tool("write").execute("3", { path: "src/output.txt", content: "delta" })).isError, undefined);
+  assert.equal(await readFile(path.join(workspace, "src", "output.txt"), "utf8"), "delta");
+  const search = await tool("search").execute("4", { query: "gamma" });
+  assert.match(search.content[0].text, /src\/input\.txt:2:gamma/);
+  assert.equal((await tool("run_check").execute("5", { name: "unapproved" })).isError, true);
+  const checkSignal = new AbortController().signal;
+  assert.equal((await tool("run_check").execute("6", { name: "unit" }, checkSignal)).content[0].text, "observed feedback");
+  assert.deepEqual(checks, [{ name: "unit", context: { workspace, signal: checkSignal } }]);
+  assert.match(state.prompt, /Approved feedback checks: unit/);
+  assert.match(tool("run_check").description, /unit/);
+});
+
+test("writes a specifically approved nested file without requiring write scope on its parent", async (t) => {
+  const workspace = await fixture(t);
+  await mkdir(path.join(workspace, "src", "nested"), { recursive: true });
+  const { sdk, state } = fakeSdk();
+  await runPiWorker({
+    workspace,
+    goal: "Write the approved file",
+    scope: { read: [], write: ["src/nested/output.txt"], forbidden: [] },
+    sdk,
+  });
+
+  const write = customTool(state, "write");
+  const result = await write.execute("write", { path: "src/nested/output.txt", content: "approved" });
+  assert.equal(result.isError, undefined);
+  assert.equal(await readFile(path.join(workspace, "src", "nested", "output.txt"), "utf8"), "approved");
+});
+
+test("blocks forbidden, git, traversal, out-of-scope, and symlink paths", async (t) => {
+  const workspace = await fixture(t);
+  const outside = path.join(path.dirname(workspace), `${path.basename(workspace)}-outside`);
+  await mkdir(outside);
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await writeFile(path.join(outside, "secret.txt"), "secret");
+  await seedFile(workspace, "src/private.txt", "private");
+  await symlink(outside, path.join(workspace, "src", "linked"), "junction");
+  const { sdk, state } = fakeSdk();
+  await runPiWorker({
+    workspace,
+    goal: "Read source",
+    scope: { read: ["src"], write: ["src"], forbidden: ["src/private.txt"] },
+    sdk,
+  });
+  const read = customTool(state, "read");
+  for (const pathName of ["../outside/secret.txt", ".git/config", "src/private.txt", "src/linked/secret.txt", "outside/secret.txt"]) {
+    assert.equal((await read.execute("read", { path: pathName })).isError, true, pathName);
+  }
+});
+
+test("edit replaces exactly one occurrence and rejects ambiguous matches", async t => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk();
+  await runPiWorker({ workspace, goal: "Edit one spot", scope: { read: ["src"], write: ["src"], forbidden: [] }, sdk });
+  const edit = customTool(state, "edit");
+  const attempt = async (oldText, content) => {
+    await seedFile(workspace, "src/target.txt", content);
+    return edit.execute("edit", { path: "src/target.txt", oldText, newText: "Z" });
+  };
+  assert.equal((await attempt("aa", "aaa")).isError, true);
+  assert.equal(await readFile(path.join(workspace, "src", "target.txt"), "utf8"), "aaa");
+  assert.equal((await attempt("aba", "ababa")).isError, true);
+  assert.equal(await readFile(path.join(workspace, "src", "target.txt"), "utf8"), "ababa");
+  assert.equal((await attempt("aa", "aaZaa")).isError, true);
+  assert.equal((await attempt("b", "abc")).isError, undefined);
+  assert.equal(await readFile(path.join(workspace, "src", "target.txt"), "utf8"), "aZc");
+});
+
+test("applies Windows path rules to scope and tool paths", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows path rules are platform-specific");
+  const workspace = await fixture(t);
+  for (const invalid of ["src/file.txt:stream", "src/CON.log", "src/NUL", "src/trailing.", "src/trailing "]) {
+    await assert.rejects(runPiWorker({
+      workspace,
+      goal: "Inspect",
+      scope: { read: [invalid], write: [], forbidden: [] },
+      sdk: fakeSdk().sdk,
+    }), /Invalid Windows read scope path component/);
+  }
+  await seedFile(workspace, "src/secret.txt", "secret");
+  const { sdk, state } = fakeSdk();
+  await runPiWorker({
+    workspace,
+    goal: "Read the allowed source",
+    scope: { read: ["SRC"], write: [], forbidden: ["SRC/Secret.txt"] },
+    sdk,
+  });
+  const read = customTool(state, "read");
+  const search = customTool(state, "search");
+  for (const invalid of ["src/secret.txt:stream", "src/CON.log", "src/NUL", "src/trailing.", "src/trailing "]) {
+    assert.equal((await read.execute("read", { path: invalid })).isError, true, invalid);
+  }
+  assert.equal((await read.execute("read", { path: "src/secret.txt" })).isError, true);
+  assert.equal((await search.execute("search", { query: "secret" })).content[0].text, "No matches");
+});
+
+test("rejects active-tool mismatches and disposes the session", async (t) => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk({ activeTools: ["read", "bash"] });
+  await assert.rejects(runPiWorker(inspectRequest({ workspace, sdk })), /active tools mismatch/);
+  assert.equal(state.disposed, true);
+});
+
+test("disposes the session when prompting fails", async (t) => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk({ promptError: new Error("provider unavailable") });
+  await assert.rejects(runPiWorker(inspectRequest({ workspace, sdk })), /provider unavailable/);
+  assert.equal(state.disposed, true);
+});
+
+test("aborts and disposes the session when the caller cancels", async (t) => {
+  const workspace = await fixture(t);
+  const { sdk, state } = fakeSdk();
+  sdk.createAgentSession = async (options) => {
+    state.options = options;
+    return {
+      session: {
+        async prompt(prompt) { state.prompt = prompt; await new Promise((resolve) => { state.finish = resolve; }); },
+        getActiveToolNames: () => options.tools,
+        async abort() { state.finish(); },
+        async dispose() { state.disposed = true; },
+      },
+    };
+  };
+  const controller = new AbortController();
+  const pending = runPiWorker(inspectRequest({ workspace, signal: controller.signal, sdk }));
+  while (!state.prompt) await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(pending, { name: "AbortError" });
+  assert.equal(state.disposed, true);
+});
+
+test("the installed Pi SDK accepts the isolated no-model session configuration", {
+  skip: process.env.VERITY_PI_SDK_SMOKE !== "1" && "set VERITY_PI_SDK_SMOKE=1 to run the optional SDK smoke",
+}, async (t) => {
+  const workspace = await fixture(t);
+  const sdk = await realPiSdk();
+  const result = await runPiWorker(inspectRequest({ workspace, goal: "No model request is made by this smoke", sdk }));
+  assert.equal(result.status, "candidate");
+});
+
+const catalogModel = {
+  provider: "google", id: "gemini-2.5-flash", maxTokens: 1_000,
+  cost: { input: 0.3, output: 2.5, cacheRead: 0.075, cacheWrite: 0.375 },
+};
+
+test("every model request is priced from the catalog and admitted before dispatch", async t => {
+  const workspace = await fixture(t);
+  const order = [];
+  const admissions = [];
+  const modelRuntime = {
+    stream(requestModel, context) { order.push("stream"); return { requestModel, context }; },
+    streamSimple(requestModel, context) { order.push("streamSimple"); return { requestModel, context }; },
+  };
+  const context = [{ role: "user", content: "hello world" }];
+  const { sdk } = fakeSdk({
+    promptRun: options => {
+      options.modelRuntime.stream(catalogModel, context);
+      options.modelRuntime.streamSimple(catalogModel, context);
+    },
+  });
+  const result = await runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime,
+    admitRequest: ({ boundMicros, requestBound }) => {
+      order.push("admit");
+      admissions.push({ boundMicros, requestBound });
+    },
+  }));
+  assert.equal(result.status, "candidate");
+  assert.deepEqual(order, ["admit", "stream", "admit", "streamSimple"]);
+  const inputBytes = Buffer.byteLength(JSON.stringify(context), "utf8");
+  for (const admission of admissions) {
+    assert.equal(admission.boundMicros, requestBoundMicros(admission.requestBound, inputBytes));
+    assert.equal(admission.boundMicros, Math.ceil(inputBytes * 0.6) + Math.ceil(1_000 * 2.5));
+    assert.deepEqual({ ...admission.requestBound }, {
+      provider: "google", model: "gemini-2.5-flash", inputUsdPerMTok: 0.6, outputUsdPerMTok: 2.5,
+      maxOutputTokens: 1_000, source: "pi-model-catalog",
+    });
+  }
+});
+
+test("an over-budget model request is refused before it reaches the provider", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const modelRuntime = recordingRuntime(dispatched);
+  const { sdk } = fakeSdk({ promptRun: options => { options.modelRuntime.stream(catalogModel, []); } });
+  await assert.rejects(runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime,
+    admitRequest: () => { throw new CostExhausted("Cost ceiling exhausted: request bound exceeds the remaining"); },
+  })), /Cost ceiling exhausted/);
+  assert.deepEqual(dispatched, []);
+});
+
+test("a session that swallows the refusal still fails the attempt with the cost reason", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const modelRuntime = recordingRuntime(dispatched);
+  const { sdk } = fakeSdk({
+    promptRun: options => {
+      try { options.modelRuntime.stream(catalogModel, []); } catch { /* the session reports errors as messages */ }
+    },
+  });
+  await assert.rejects(runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime,
+    admitRequest: () => { throw new CostExhausted("Cost ceiling exhausted: request bound exceeds the remaining"); },
+  })), /Cost ceiling exhausted/);
+  assert.deepEqual(dispatched, []);
+});
+
+test("a pinned request bound fails closed when the catalog exceeds it", async t => {
+  const workspace = await fixture(t);
+  const dispatched = [];
+  const modelRuntime = recordingRuntime(dispatched);
+  const { sdk } = fakeSdk({ promptRun: options => { options.modelRuntime.stream(catalogModel, []); } });
+  await assert.rejects(runPiWorker(inspectRequest({
+    workspace, sdk,
+    model: catalogModel, modelRuntime,
+    requestBound: {
+      provider: "google", model: "gemini-2.5-flash", inputUsdPerMTok: 0.3, outputUsdPerMTok: 2.5,
+      maxOutputTokens: 1_000, source: "approved plan",
+    },
+    admitRequest: () => {},
+  })), /exceeds the pinned request bound/);
+  assert.deepEqual(dispatched, []);
+});
+
+function fakeBashTool() {
+  return {
+    name: "bash", label: "Bash", description: "Run a shell command in the workspace.",
+    parameters: { type: "object" },
+    async execute() { return { content: [{ type: "text", text: "ran" }], details: {} }; },
+  };
+}
+
+test("the shell arm extends the restricted tool set with one bash tool", async t => {
+  const workspace = await fixture(t);
+  const reservations = [];
+  const { sdk, state } = fakeSdk();
+  sdk.createBashTool = fakeBashTool;
+  const result = await runPiWorker(inspectRequest({
+    workspace, sdk, shell: true,
+    reserveToolCall: () => reservations.push("reserved"),
+  }));
+  assert.equal(result.status, "candidate");
+  assert.deepEqual(state.options.tools, ["read", "write", "edit", "search", "bash"]);
+  const bash = customTool(state, "bash");
+  await bash.execute("call-1", {});
+  assert.deepEqual(reservations, ["reserved"]);
+});
+
+test("the shell arm fails closed when the SDK cannot supply a bash tool", async t => {
+  const workspace = await fixture(t);
+  const { sdk } = fakeSdk();
+  await assert.rejects(runPiWorker(inspectRequest({ workspace, sdk, shell: true })), /createBashTool/);
+});
+
+test("the real SDK accepts a shell-arm session in the isolated workspace", async (t) => {
+  const workspace = await fixture(t);
+  const sdk = await realPiSdk();
+  const result = await runPiWorker(inspectRequest({ workspace, goal: "No model request is made by this smoke", sdk, shell: true }));
+  assert.equal(result.status, "candidate");
+});
