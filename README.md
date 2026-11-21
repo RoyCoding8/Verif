@@ -96,7 +96,7 @@ Verification checks the signature and the immutable commit, tree, parent, and re
 
 The `node-test` and `finite-domain` JSON oracles list case IDs, module paths, exported functions, inputs, and expected values. The evaluator receives inputs in a separate process. The verifier compares its output with the approved values and binds the result to the oracle digest, adapter, and checked tree.
 
-The tested route reports observed cases. The bounded route requires exactly one case for every input tuple in the approved finite domain. A human reviews whether the domain and expected values capture the intended claim. The TLA+ model checks a finite promotion protocol and includes an unfenced configuration that must produce an unauthorized-update counterexample.
+The tested route reports observed cases. The bounded route requires exactly one case for every input tuple in the approved finite domain. A human reviews whether the domain and expected values capture the intended claim. [verification/LAWS.md](verification/LAWS.md) lists the formal models of the controller itself, what each one checks, and whether a test ties it to the code.
 
 Use `node-property` to sample an approved set of inputs. Its JSON oracle specifies `module`, `name`, argument `axes`, a constant `expected` result, a uint32 `seed`, and `samples` from 1 to 1000. Use consecutive string case IDs starting at `"0"`. The receipt records the generator, seed and count. Each draw contributes tested assurance.
 

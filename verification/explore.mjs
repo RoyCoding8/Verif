@@ -1,14 +1,16 @@
-// Shared breadth-first state-space driver for the finite models in
-// verification/. Each model keeps its own initialState, stateKey,
-// transitions, and invariants; this module owns only the traversal.
-//
-// step(state) returns an iterable of edge objects `{ to, ... }`, and
-// key(state) returns the state's dedupe key. The result is
-// `{ states, paths, edges }` exactly as the previously duplicated bodies
-// returned: `states` in first-discovery order, `paths` keyed by state key
-// holding the edge sequence from the initial state, and `edges` holding
-// every edge in traversal order.
-export function explore(initial, step, key) {
+export function stateKey(state) {
+  return JSON.stringify(state);
+}
+
+export function edge(state, action, to, outcome = 'ok', details = {}) {
+  return { from: state, action, to, outcome, ...details };
+}
+
+export function replace(state, patch) {
+  return { ...state, ...patch };
+}
+
+export function explore(initial, step, key = stateKey) {
   const initialKey = key(initial);
   const states = new Map([[initialKey, initial]]);
   const paths = new Map([[initialKey, []]]);
@@ -18,10 +20,10 @@ export function explore(initial, step, key) {
     const state = queue[cursor];
     for (const next of step(state)) {
       edges.push(next);
-      const stateKey = key(next.to);
-      if (!states.has(stateKey)) {
-        states.set(stateKey, next.to);
-        paths.set(stateKey, [...paths.get(key(state)), next]);
+      const nextKey = key(next.to);
+      if (!states.has(nextKey)) {
+        states.set(nextKey, next.to);
+        paths.set(nextKey, [...paths.get(key(state)), next]);
         queue.push(next.to);
       }
     }

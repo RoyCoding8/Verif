@@ -3,39 +3,16 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { after, test } from 'node:test';
 import { GitRepo } from '../src/git.mjs';
 import { safePath } from '../src/contracts.mjs';
+import { commit, git, initRepo } from './helpers.mjs';
 
 const tmp = path.resolve('tmp', `git-tests-${process.pid}`);
 fs.mkdirSync(tmp, { recursive: true });
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-function git(cwd, ...args) {
-  const options = args.at(-1)?.inputBuffer !== undefined ? args.pop() : {};
-  const input = options.inputBuffer;
-  const output = execFileSync('git', ['-C', cwd, ...args], {
-    encoding: input === undefined ? 'utf8' : undefined, input, stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(cwd, '.git', 'verity-empty-config') },
-  });
-  return Buffer.isBuffer(output) ? output : output.trim();
-}
-
-function repo(name, objectFormat = 'sha1') {
-  const root = path.join(tmp, name);
-  fs.mkdirSync(root, { recursive: true });
-  git(root, 'init', '--quiet', '--initial-branch=main', `--object-format=${objectFormat}`);
-  git(root, 'config', 'user.name', 'Test');
-  git(root, 'config', 'user.email', 'test@invalid');
-  return root;
-}
-
-function commit(root, message) {
-  git(root, 'add', '-A');
-  git(root, 'commit', '--quiet', '-m', message);
-  return git(root, 'rev-parse', 'HEAD');
-}
+const repo = (name, objectFormat) => initRepo(path.join(tmp, name), objectFormat);
 
 test('reads and updates refs with compare-and-swap', () => {
   const root = repo('cas');

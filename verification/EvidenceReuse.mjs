@@ -1,21 +1,11 @@
-import { explore as sharedExplore } from './explore.mjs';
+import { edge, replace, stateKey, explore as sharedExplore } from './explore.mjs';
+
+export { stateKey };
 
 const initialState = Object.freeze({
   cache: 'empty', storedIdentity: 'none', identity: 'same', authority: 'fresh',
   source: 'none', evidenceIdentity: 'none', promoted: false,
 });
-
-export function stateKey(state) {
-  return JSON.stringify(state);
-}
-
-function edge(state, action, nextState, outcome = 'ok') {
-  return { from: state, action, to: nextState, outcome };
-}
-
-function replace(state, patch) {
-  return { ...state, ...patch };
-}
 
 export function transitions(state, { unsafeAuthorization = false } = {}) {
   const edges = [];

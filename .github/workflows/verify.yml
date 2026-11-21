@@ -25,6 +25,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - run: node verification/laws.mjs --check
       - run: npm test
         env:
           VERITY_PI_SDK_SMOKE: "1"

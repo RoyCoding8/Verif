@@ -1,4 +1,6 @@
-import { explore as sharedExplore } from './explore.mjs';
+import { edge, replace as changed, stateKey, explore as sharedExplore } from './explore.mjs';
+
+export { stateKey };
 
 const approvalA = 'a'.repeat(64);
 const approvalB = 'b'.repeat(64);
@@ -12,21 +14,9 @@ export const initialState = Object.freeze({
   ref: 'old',
 });
 
-export function stateKey(state) {
-  return JSON.stringify(state);
-}
-
 export function effectiveAuthority(state, attemptId, { ignoreRevocation = false } = {}) {
   const attempt = state.attempts.find(item => item.id === attemptId);
   return Boolean(attempt?.active && (ignoreRevocation || !state.revoked.includes(attempt.approval)));
-}
-
-function edge(state, action, next, outcome) {
-  return { from: state, action, to: next, outcome };
-}
-
-function changed(state, patch) {
-  return { ...state, ...patch };
 }
 
 export function transition(state, action, { ignoreRevocation = false } = {}) {

@@ -43,38 +43,7 @@ jobs:
           lake check
         working-directory: verification/lean-refinement
       - name: Check the refinement declarations for axiom dependencies
-        run: |
-          lake env lean -DwarningAsError=true AxiomAudit.lean > "$RUNNER_TEMP/refinement-axioms.txt"
-          for theorem in VerityRefinement.refinesTrans finiteWitness newGuaranteeMayImproveOutsideOldDomain; do
-            grep -Fx "'$theorem' does not depend on any axioms" "$RUNNER_TEMP/refinement-axioms.txt"
-          done
-          lake env lean -DwarningAsError=true DelegationLawAudit.lean > "$RUNNER_TEMP/delegation-axioms.txt"
-          for theorem in issueSound staleSuccessorDigestReplayRejected staleSuccessorApprovalReplayRejected staleClaimReplayRejected; do
-            grep -Fx "'VerityDelegation.$theorem' does not depend on any axioms" "$RUNNER_TEMP/delegation-axioms.txt"
-          done
-          lake env lean -DwarningAsError=true AttemptBudgetLawAudit.lean > "$RUNNER_TEMP/attempt-budget-axioms.txt"
-          for theorem in executeSafe stepSafe initialSafe executeSpentMonotone stepSpentMonotone grantProgress grantRefused staleGrantRefused queuedGrantRefused exhaustedGrantRefused startDoesNotSpend clearDoesNotSpend requeueDoesNotSpend clearPreservesCap requeuePreservesCap stepPreservesCap executePreservesCap; do
-            grep -Fx "'VerityAttemptBudget.$theorem' does not depend on any axioms" "$RUNNER_TEMP/attempt-budget-axioms.txt"
-          done
-          lake env lean -DwarningAsError=true PromotionLawAudit.lean > "$RUNNER_TEMP/promotion-axioms.txt"
-          grep -Fx "'VerityPromotion.initialSafe' does not depend on any axioms" "$RUNNER_TEMP/promotion-axioms.txt"
-          for theorem in stepSafe stepPreservesWrite executeSafe executeAtMostOneWrite executePreservesWrites matchingFencesWrite movedHeadRejects revokedAuthorityRejects unapprovedTargetRejects noOpTargetRejects recoveryAfterWriteOnlyRecordsOutcome successfulRecoveryTrace retryAfterAppliedDoesNotWrite; do
-            grep -Ex "'VerityPromotion\.$theorem' (does not depend on any axioms|depends on axioms: \[(propext|Quot\.sound|propext, Quot\.sound)\])" "$RUNNER_TEMP/promotion-axioms.txt"
-          done
-          lake env lean -DwarningAsError=true HistoryLawAudit.lean > "$RUNNER_TEMP/history-axioms.txt"
-          for theorem in search_correct completeHistory_correct; do
-            grep -Fx "'VerityHistoryLaw.$theorem' depends on axioms: [propext, Quot.sound]" "$RUNNER_TEMP/history-axioms.txt"
-          done
-          for theorem in acceptedCompleteHistory rejectedRealTimeViolation acceptedImpliesConstructiveExecution; do
-            grep -Fx "'VerityHistoryAudit.$theorem' depends on axioms: [propext, Classical.choice, Quot.sound]" "$RUNNER_TEMP/history-axioms.txt"
-          done
-          lake env lean -DwarningAsError=true NodeDifferential.lean > "$RUNNER_TEMP/node-differential-axioms.txt"
-          for theorem in acceptance_preserves_observations acceptance_binds_snapshots_recipe_and_oracle refactorAccepted staleBaselineRejected staleCandidateManifestRejected staleOracleRejected incompleteInventoryRejected explicitFalsePositiveRejected; do
-            grep -Fx "'VerityNodeDifferential.$theorem' does not depend on any axioms" "$RUNNER_TEMP/node-differential-axioms.txt"
-          done
-          for theorem in acceptedCheck_correct refactorAcceptedAsProp; do
-            grep -Fx "'VerityNodeDifferential.$theorem' depends on axioms: [propext, Quot.sound]" "$RUNNER_TEMP/node-differential-axioms.txt"
-          done
+        run: node ../axiom-audit.mjs .
         working-directory: verification/lean-refinement
       - name: Check generated witnesses with the pinned Lake Comparator
         run: node --test test/refinement-proof.test.mjs test/refinement-cli.test.mjs test/semantic-delegation.test.mjs

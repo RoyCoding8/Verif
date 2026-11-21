@@ -21,8 +21,7 @@ Run from this directory:
 ~~~powershell
 lake build --wfail
 lake check
-lake env lean -DwarningAsError=true AxiomAudit.lean > axioms.txt
-node check-axioms.mjs axioms.txt
+node ../axiom-audit.mjs .
 lake exe contractFixtures > lean-results.json
 node compare.mjs lean-results.json
 ~~~

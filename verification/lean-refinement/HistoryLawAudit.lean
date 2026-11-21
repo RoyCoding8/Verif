@@ -46,10 +46,10 @@ theorem acceptedImpliesConstructiveExecution :
       VerityHistoryLaw.Executes history forwardMachine history.ids.length history.ids false :=
   VerityHistoryLaw.completeHistory_correct history forwardMachine false
 
-#print axioms VerityHistoryLaw.search_correct
-#print axioms VerityHistoryLaw.completeHistory_correct
-#print axioms acceptedCompleteHistory
-#print axioms rejectedRealTimeViolation
-#print axioms acceptedImpliesConstructiveExecution
+#print axioms VerityHistoryLaw.search_correct -- allow: propext Quot.sound
+#print axioms VerityHistoryLaw.completeHistory_correct -- allow: propext Quot.sound
+#print axioms acceptedCompleteHistory -- allow: propext Classical.choice Quot.sound
+#print axioms rejectedRealTimeViolation -- allow: propext Classical.choice Quot.sound
+#print axioms acceptedImpliesConstructiveExecution -- allow: propext Classical.choice Quot.sound
 
 end VerityHistoryAudit

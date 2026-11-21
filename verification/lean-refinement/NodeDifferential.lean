@@ -107,9 +107,9 @@ theorem refactorAcceptedAsProp : accepted approvedDomain refactor :=
 
 #print axioms acceptance_preserves_observations
 #print axioms acceptance_binds_snapshots_recipe_and_oracle
-#print axioms acceptedCheck_correct
+#print axioms acceptedCheck_correct -- allow: propext Quot.sound
 #print axioms refactorAccepted
-#print axioms refactorAcceptedAsProp
+#print axioms refactorAcceptedAsProp -- allow: propext Quot.sound
 #print axioms staleBaselineRejected
 #print axioms staleCandidateManifestRejected
 #print axioms staleOracleRejected

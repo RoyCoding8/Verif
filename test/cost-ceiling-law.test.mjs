@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { CostExhausted } from '../src/cost-ceiling.mjs';
+import { Journal } from '../src/journal.mjs';
 import {
   accountingInvariant,
   admissionInvariant,
   caps,
   ceilingInvariant,
   explore,
+  stateKey,
 } from '../verification/CostCeiling.mjs';
 
 const expected = new Map([[2, [3, 9]], [3, [4, 12]]]);
@@ -57,3 +63,37 @@ for (const [mutation, expectedViolations] of Object.entries({
     });
   }
 }
+
+test('the journal ledger follows every model edge, including restarts', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'verity-cost-law-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const requestBound = { provider: 'model', model: 'model', inputUsdPerMTok: 0, outputUsdPerMTok: 0, maxOutputTokens: 1, source: 'model' };
+  const attempt = '11111111-2222-4333-8444-555555555555';
+  let replays = 0;
+  for (const cap of caps) {
+    const graph = explore(cap);
+    for (const edge of graph.edges) {
+      const path = join(dir, `${cap}-${replays += 1}.sqlite`);
+      let journal = new Journal(path);
+      journal.setCostCeiling(cap);
+      journal.registerAttempt({ id: attempt, contract: 'a'.repeat(64), policy: 'approved-policy' });
+      try {
+        for (const step of [...graph.paths.get(stateKey(edge.from)), edge]) {
+          if (step.action === 'restart') {
+            journal.close();
+            journal = new Journal(path);
+          } else if (step.outcome === 'admitted') {
+            journal.reserveCost(attempt, step.bound, requestBound);
+          } else {
+            assert.throws(() => journal.reserveCost(attempt, step.bound, requestBound), CostExhausted);
+          }
+          assert.deepEqual(journal.costCeiling(), { ceilingMicros: step.to.cap, reservedMicros: step.to.reserved },
+            `cap ${cap}: ${step.action}/${step.outcome} bound ${step.bound}`);
+        }
+      } finally {
+        journal.close();
+      }
+    }
+  }
+  assert.equal(replays, 21, 'every edge of both cap graphs was replayed');
+});

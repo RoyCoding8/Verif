@@ -2,39 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { after, test } from 'node:test';
 import { GitRepo } from '../src/git.mjs';
+import { commit, git, initRepo } from './helpers.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'verity-projection-'));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-function git(cwd, ...args) {
-  const inputBuffer = args.at(-1)?.inputBuffer;
-  if (inputBuffer !== undefined) args.pop();
-  const output = execFileSync('git', ['-C', cwd, ...args], {
-    encoding: inputBuffer === undefined ? 'utf8' : undefined,
-    input: inputBuffer,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(cwd, '.git', 'empty-config') },
-  });
-  return Buffer.isBuffer(output) ? output : output.trim();
-}
-
-function makeRepo(name) {
-  const root = path.join(tmp, name);
-  fs.mkdirSync(root);
-  git(root, 'init', '--quiet', '--initial-branch=main');
-  git(root, 'config', 'user.name', 'Test');
-  git(root, 'config', 'user.email', 'test@invalid');
-  return root;
-}
-
-function commit(root, message) {
-  git(root, 'add', '-A');
-  git(root, 'commit', '--quiet', '-m', message);
-  return git(root, 'rev-parse', 'HEAD');
-}
+const makeRepo = (name) => initRepo(path.join(tmp, name));
 
 function listFiles(directory, prefix = '') {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

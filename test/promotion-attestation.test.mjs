@@ -1,27 +1,12 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { digest, planVerification } from '../src/contracts.mjs';
 import { GitRepo } from '../src/git.mjs';
 import { createPromotionAttestation, PROMOTION_PREDICATE_TYPE, verifyPromotionAttestation } from '../src/promotion-attestation.mjs';
-
-function git(root, args, input) {
-  return execFileSync('git', ['-C', root, ...args], {
-    input,
-    encoding: input === undefined ? 'utf8' : undefined,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(root, '.git', 'verity-test-config') },
-  }).toString().trim();
-}
-
-function commit(root, message) {
-  git(root, ['add', '-A']);
-  git(root, ['-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit', '--quiet', '-m', message]);
-  return git(root, ['rev-parse', 'HEAD']);
-}
+import { commit, git, initRepo } from './helpers.mjs';
 
 function pae(type, payload) {
   const encodedType = Buffer.from(type, 'ascii');
@@ -45,8 +30,7 @@ function statement(envelope) {
 function fixture() {
   const scratch = path.resolve('tmp');
   fs.mkdirSync(scratch, { recursive: true });
-  const root = fs.mkdtempSync(path.join(scratch, 'verity-attestation-'));
-  git(root, ['init', '--quiet', '--initial-branch=main']);
+  const root = initRepo(fs.mkdtempSync(path.join(scratch, 'verity-attestation-')));
   fs.writeFileSync(path.join(root, 'value.txt'), 'base');
   const base = commit(root, 'base');
   fs.writeFileSync(path.join(root, 'value.txt'), 'candidate');
@@ -117,9 +101,9 @@ test('promotion attestation has a deterministic signed replay and rejects the fi
   wrongParent.predicate.parentCommit = candidate;
   const wrongReceipt = statement(envelope);
   wrongReceipt.predicate.receiptDigest = '0'.repeat(64);
-  const twoParentCommit = git(root, ['-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit-tree',
-    repo.commitObject(operation.next).tree, '-p', base, '-p', candidate],
-  Buffer.from(`Verity promotion\n\nOperation: ${operation.id}\nReceipt: ${digest(operation.receipt)}\n`));
+  const twoParentCommit = git(root, 'commit-tree', repo.commitObject(operation.next).tree, '-p', base, '-p', candidate,
+    { inputBuffer: Buffer.from(`Verity promotion\n\nOperation: ${operation.id}\nReceipt: ${digest(operation.receipt)}\n`) })
+    .toString().trim();
   const twoParent = statement(envelope);
   twoParent.subject[0].digest.gitCommit = twoParentCommit;
   const signed = value => resign(envelope, value, keys.privateKey);

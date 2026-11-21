@@ -5,26 +5,16 @@
 // independent rule recomputed from each transition, so the unsafe mutations
 // must be caught by exploring the graph.
 
+import { edge, replace, stateKey, explore as sharedExplore } from './explore.mjs';
+
+export { stateKey };
+
 export const boundSet = Object.freeze([1, 2]);
 export const caps = Object.freeze([2, 3]);
 
 export function initialState(cap) {
   if (!caps.includes(cap)) throw new RangeError('cap must be one of ' + caps.join(', '));
   return Object.freeze({ cap, reserved: 0, admittedTotal: 0, issuedTotal: 0, raised: false });
-}
-
-export function stateKey(state) {
-  return JSON.stringify(state);
-}
-
-import { explore as sharedExplore } from './explore.mjs';
-
-function edge(state, action, next, outcome = 'ok', details = {}) {
-  return { from: state, action, to: next, outcome, ...details };
-}
-
-function replace(state, patch) {
-  return { ...state, ...patch };
 }
 
 export function transitions(state, {
