@@ -1,0 +1,80 @@
+/* Composer dock and pointer geometry adapted from Paseo v0.16.2 (Apache-2.0). */
+:root {
+  color-scheme: light dark;
+  --shell: light-dark(#f4f4f5, #18181b);
+  --canvas: light-dark(#fff, #121214);
+  --surface: light-dark(#fafafa, #1a1a1d);
+  --ink: light-dark(#18181b, #f4f4f5);
+  --muted: light-dark(#52525b, #a1a1aa);
+  --line: light-dark(#e4e4e7, #3f3f46);
+  --selected: light-dark(#e4e4e7, #27272a);
+  --accent: light-dark(#2563eb, #93c5fd);
+  font: 14px/1.5 system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--shell);
+}
+* { box-sizing: border-box; }
+body { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 8px; height: 100dvh; margin: 0; padding: 8px; }
+nav { min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 8px; overflow-y: auto; }
+.brand { padding: 4px 10px 15px; font-size: 17px; letter-spacing: -.03em; }
+button, select, textarea { font: inherit; color: inherit; }
+button, select { padding: 4px 10px; min-height: 28px; border: 0; border-radius: 8px; background: transparent; }
+button { cursor: pointer; }
+button:hover:enabled, select:hover:enabled { background: var(--selected); }
+button:disabled, select:disabled { opacity: .5; cursor: default; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+nav button { display: block; width: 100%; text-align: left; }
+nav button[aria-current] { background: var(--selected); }
+#sessions { display: grid; gap: 2px; margin-top: 10px; }
+#sessions button, #detach { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+main { display: grid; grid-template: minmax(0, 1fr) auto / minmax(0, 1fr) 224px; gap: 12px 20px; padding: 16px; min-height: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--canvas); }
+aside { grid-column: 2; grid-row: 1 / span 2; align-self: start; display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+aside span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+aside span:empty { display: none; }
+#chat { grid-column: 1; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+h1 { margin: auto; padding: 24px; text-align: center; font-size: clamp(20px, 3vw, 32px); line-height: 1.2; font-weight: 600; letter-spacing: -.04em; }
+article { width: min(100%, 740px); margin: 0 auto; padding: 10px 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+article.user { align-self: end; width: fit-content; max-width: min(88%, 740px); margin-right: 0; border-radius: 16px; background: var(--shell); }
+#composer { position: relative; grid-column: 1; justify-self: center; width: min(100%, 740px); height: max-content; margin-bottom: 4px; padding: 16px 16px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+#composer:focus-within { border-color: var(--muted); }
+textarea { width: 100%; padding: 0; resize: vertical; min-height: 48px; max-height: 30vh; border: 0; outline: 0; background: transparent; }
+.tools { display: flex; align-items: center; gap: 8px; }
+#queue[hidden] { display: none; }
+#pending { color: var(--muted); font-size: 12px; }
+#model { margin-left: auto; max-width: 56%; }
+#model, #thinking { min-width: 0; }
+#detach { max-width: 33%; }
+#attach, #send { width: 28px; height: 28px; flex: none; padding: 0; border-radius: 50%; font-size: 17px; }
+#send, #send:hover:enabled { color: var(--canvas); background: var(--accent); }
+#completions:not([hidden]) { position: absolute; bottom: calc(100% + 4px); left: 0; display: grid; gap: 2px; max-width: 100%; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+#completions button { text-align: left; }
+#error { grid-column: 1; margin: 0; padding: 6px 10px; color: light-dark(#991b1b, #fca5a5); }
+@media (max-width: 930px) {
+  body { grid-template-columns: 170px minmax(0, 1fr); }
+  main { grid-template: auto minmax(0, 1fr) auto / minmax(0, 1fr); }
+  aside { grid-column: 1; grid-row: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+}
+
+#session { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#session[hidden] { display: none; }
+#session-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#rename { flex: none; font-size: 12px; }
+#rename-input { width: 100%; padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: inherit; font: inherit; }
+
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--canvas); color: var(--ink); padding: 16px; width: min(560px, calc(100vw - 32px)); }
+dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+dialog h2 { margin: 0 0 12px; font-size: 14px; }
+#fork-messages { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow: auto; margin-bottom: 12px; }
+#fork-messages button { text-align: left; background: var(--surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#fork-messages button:hover:enabled { background: var(--selected); }
+#fork-cancel { margin-left: auto; display: block; }
+#settings { margin-top: auto; }
+#provider-fields { display: grid; gap: 10px; padding: 0; margin: 0; border: 0; }
+#provider-fields label { display: grid; gap: 4px; }
+#provider-fields input, #provider-fields select { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: inherit; font: inherit; }
+#provider-note { color: var(--muted); margin: 0; }
+#settings-close { margin-left: auto; }
+
+.tool-activity { display: flex; flex-wrap: wrap; gap: 6px; }
+.tool-activity[hidden] { display: none; }
+.tool-activity-item { padding: 2px 8px; border-radius: 999px; background: var(--selected); font-size: 12px; }

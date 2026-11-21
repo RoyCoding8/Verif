@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+    <title>Verity</title>
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <nav aria-label="Conversations">
+      <strong class="brand">Verity</strong>
+      <button id="open" type="button">Open project</button>
+      <button id="new" type="button" disabled>New chat</button>
+      <button id="clone" type="button" disabled>Clone chat</button>
+      <button id="fork" type="button" disabled>Fork chat</button>
+      <button id="export" type="button" disabled>Export HTML</button>
+      <div id="sessions"></div>
+      <button id="settings" type="button">Settings</button>
+    </nav>
+    <main>
+      <aside aria-label="Project details">
+        <strong id="project">No project</strong>
+        <span id="path"></span>
+        <div id="session" hidden>
+          <span id="session-name"></span>
+          <button id="rename" type="button" aria-label="Rename conversation">Rename</button>
+        </div>
+        <span id="status" role="status"></span>
+        <div id="tool-activity" class="tool-activity" hidden aria-live="polite"></div>
+        <span id="usage"></span>
+        <span id="notice" role="status"></span>
+      </aside>
+      <section id="chat" aria-label="Chat">
+        <h1>Open a project to start chatting</h1>
+      </section>
+      <form id="composer" aria-label="Compose a message">
+        <textarea id="message" aria-label="Message" placeholder="Message Pi" rows="2" disabled></textarea>
+        <div id="completions" hidden></div>
+        <div id="queue" class="tools" hidden>
+          <button type="button" id="steer">Steer</button>
+          <button type="button" id="follow-up">Follow up</button>
+          <span id="pending" role="status"></span>
+          <button type="button" id="clear-queue" hidden>Clear queue</button>
+        </div>
+        <div class="tools">
+          <button type="button" id="attach" title="Attach image" aria-label="Attach image" disabled>+</button>
+          <button type="button" id="detach" hidden></button>
+          <select id="model" aria-label="Model" disabled><option value="">Choose a model</option></select>
+          <select id="thinking" aria-label="Thinking level" title="Thinking level" hidden></select>
+          <button id="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
+        </div>
+      </form>
+      <p id="error" role="alert" hidden></p>
+    </main>
+    <dialog id="fork-dialog" aria-labelledby="fork-heading">
+      <h2 id="fork-heading">Fork from message</h2>
+      <div id="fork-messages"></div>
+      <button id="fork-cancel" type="button">Cancel</button>
+    </dialog>
+    <dialog id="settings-dialog" aria-labelledby="settings-heading">
+      <h2 id="settings-heading">Providers</h2>
+      <form id="provider-form">
+        <fieldset id="provider-fields">
+          <label>Provider <select id="provider-profile" name="id"></select></label>
+          <label>Name <input name="label" required maxlength="120"></label>
+          <label>Protocol <select name="api">
+            <option value="openai-completions">OpenAI Chat Completions</option>
+            <option value="openai-responses">OpenAI Responses</option>
+            <option value="anthropic-messages">Anthropic Messages</option>
+          </select></label>
+          <label>Base URL <input name="baseUrl" type="url" required maxlength="2048"></label>
+          <label>Model ID <input name="modelId" required maxlength="256"></label>
+          <label>API key <input name="apiKey" type="password" autocomplete="off" maxlength="8192"></label>
+          <p id="provider-note" role="status"></p>
+          <div class="tools">
+            <button id="provider-remove" type="button" disabled>Remove</button>
+            <button id="settings-close" type="button">Close</button>
+            <button type="submit">Save</button>
+          </div>
+        </fieldset>
+      </form>
+    </dialog>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

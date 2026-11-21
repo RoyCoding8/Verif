@@ -1,6 +1,29 @@
 # Verity
 
-Verity runs approved software tasks in separate Git checkouts. It checks the exact integration snapshot and records the results before updating the protected branch.
+Verity has a lightweight desktop for Pi conversations and a CLI for checked Git changes. In an approved CLI run, Pi workers propose changes in separate checkouts. Verity checks the exact integration snapshot and records the results before updating the protected branch.
+
+## Open the desktop
+
+Use Node.js 24 or later. From the checkout, install the dependencies and start the desktop.
+
+```sh
+npm ci
+npm run app
+```
+
+Select **Open project** and choose a directory. Start a conversation with **New chat** or resume one from the sidebar. Choose a configured model and, when supported, a thinking level in the composer. Use `+` to attach an image and the send button to stop a streaming reply. Type `/` for available commands and `$` for installed skills. The project card shows Pi's token usage and lets you rename the conversation.
+
+Use **Clone chat** to copy the active conversation. Use **Fork chat** to branch before a selected user message and put that message back in the composer. Use **Export HTML** to save the active conversation to a file.
+
+Type `/compact` to summarize older context in the current chat. Add instructions after the command to give the summary a focus.
+
+While Pi is responding, use **Steer** to send guidance before its next turn or **Follow up** to queue a message for after the current work. **Clear queue** removes waiting messages while the response continues. The project card lists the tools Pi is currently running.
+
+The desktop starts the Pi version installed with Verity and uses Pi's local configuration and session history. For interactive sign-in, run `npm exec -- pi` from the checkout. To add a custom endpoint, open **Settings** and choose OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages. Enter the base URL, model ID, and API key. OpenAI-compatible base URLs typically end in `/v1`. Pi appends `/v1/messages` for Anthropic-compatible endpoints. Verity encrypts saved keys with the system credential store. Reopen your project after changing a provider. Custom profiles register one text model each.
+
+Desktop conversations use read-only built-in tools. Run approved changes and inspect promotion receipts through the CLI.
+
+Composer behavior and control spacing are adapted from [Paseo v0.16.2](https://github.com/getpaseo/paseo/tree/v0.16.2) under the [Apache 2.0 license](desktop/Paseo-LICENSE.txt).
 
 ## Run the reservation example
 

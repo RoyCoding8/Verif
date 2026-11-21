@@ -11,10 +11,16 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "demo": "node examples/run.mjs"
+    "demo": "node examples/run.mjs",
+    "app": "electron desktop/main.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.5.2",
     "typebox": "1.3.27"
+  },
+  "description": "Verity turns approved software tasks into checked Git changes",
+  "author": "Verity Team",
+  "devDependencies": {
+    "electron": "45.3.2"
   }
 }
